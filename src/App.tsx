@@ -10,6 +10,7 @@ import {
   Code2,
   Copy,
   Cpu,
+  Download,
   FlaskConical,
   Github,
   KeyRound,
@@ -22,13 +23,29 @@ import {
   Sparkles,
   Swords,
   Telescope,
+  Unlock,
+  Upload,
   Users,
   WandSparkles,
   X,
 } from "lucide-react";
 import { AGENT_EVENTS, BRIDGE_VERSION } from "./bridge/contract";
+import { loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
+import {
+  createEncryptedIdentity,
+  exportIdentityBackup,
+  IdentityVaultError,
+  parseIdentityBackup,
+  shortDid,
+  signText,
+  unlockIdentity,
+  verifyText,
+  type EncryptedIdentity,
+} from "./identity/vault";
 
 type View = "world" | "missions" | "bridge" | "proofs";
+type IdentityStep = "intro" | "preview" | "setup" | "vault";
+type VerificationState = "idle" | "valid" | "invalid";
 type Mission = {
   id: string;
   title: string;
@@ -100,12 +117,41 @@ function App() {
   const [view, setView] = useState<View>("world");
   const [hatchOpen, setHatchOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
-  const [hatchPreview, setHatchPreview] = useState(false);
+  const [identityStep, setIdentityStep] = useState<IdentityStep>("intro");
+  const [identity, setIdentity] = useState<EncryptedIdentity | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(true);
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [identityError, setIdentityError] = useState("");
+  const [agentName, setAgentName] = useState("heathley");
+  const [passphrase, setPassphrase] = useState("");
+  const [passphraseAgain, setPassphraseAgain] = useState("");
+  const [unlockPassphrase, setUnlockPassphrase] = useState("");
+  const [unlockedKey, setUnlockedKey] = useState<CryptoKey | null>(null);
+  const [signingMessage, setSigningMessage] = useState("I reviewed this contribution and approve this exact text.");
+  const [signature, setSignature] = useState("");
+  const [verification, setVerification] = useState<VerificationState>("idle");
   const [selectedMission, setSelectedMission] = useState<Mission>(missions[0]);
   const [patrolling, setPatrolling] = useState(false);
   const [pulseIndex, setPulseIndex] = useState(0);
   const [toast, setToast] = useState("");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadLocalIdentity()
+      .then((storedIdentity) => {
+        if (!active || !storedIdentity) return;
+        setIdentity(storedIdentity);
+        setAgentName(storedIdentity.agentName);
+      })
+      .catch(() => {
+        if (active) setToast("The local identity vault could not be opened.");
+      })
+      .finally(() => {
+        if (active) setIdentityLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!patrolling) return;
@@ -122,6 +168,137 @@ function App() {
   }, [toast]);
 
   const activeNode = useMemo(() => pulseIndex % nodes.length, [pulseIndex]);
+
+  function openIdentityPanel() {
+    setIdentityError("");
+    setIdentityStep(identity ? "vault" : "intro");
+    setHatchOpen(true);
+  }
+
+  function closeIdentityPanel() {
+    setHatchOpen(false);
+    setIdentityStep(identity ? "vault" : "intro");
+    setIdentityError("");
+    setPassphrase("");
+    setPassphraseAgain("");
+    setUnlockPassphrase("");
+    setUnlockedKey(null);
+  }
+
+  async function createIdentityLocally() {
+    setIdentityError("");
+    if (passphrase !== passphraseAgain) {
+      setIdentityError("The two passphrases do not match.");
+      return;
+    }
+
+    setIdentityBusy(true);
+    try {
+      const created = await createEncryptedIdentity(agentName, passphrase);
+      await saveLocalIdentity(created);
+      setIdentity(created);
+      setAgentName(created.agentName);
+      setIdentityStep("vault");
+      setToast("Local DID created and encrypted. Nothing was published.");
+    } catch (error) {
+      setIdentityError(identityErrorMessage(error));
+    } finally {
+      setPassphrase("");
+      setPassphraseAgain("");
+      setIdentityBusy(false);
+    }
+  }
+
+  async function unlockLocalIdentity() {
+    if (!identity) return;
+    setIdentityBusy(true);
+    setIdentityError("");
+    try {
+      const privateKey = await unlockIdentity(identity, unlockPassphrase);
+      setUnlockedKey(privateKey);
+      setUnlockPassphrase("");
+      setToast("Identity unlocked for this session only.");
+    } catch (error) {
+      setIdentityError(identityErrorMessage(error));
+    } finally {
+      setIdentityBusy(false);
+    }
+  }
+
+  function lockLocalIdentity() {
+    setUnlockedKey(null);
+    setSignature("");
+    setVerification("idle");
+    setToast("Identity locked.");
+  }
+
+  async function signCurrentText() {
+    if (!unlockedKey) return;
+    setIdentityError("");
+    try {
+      const nextSignature = await signText(unlockedKey, signingMessage);
+      setSignature(nextSignature);
+      setVerification("valid");
+      setToast("Signed locally. Nothing was published.");
+    } catch (error) {
+      setIdentityError(identityErrorMessage(error));
+    }
+  }
+
+  async function verifyCurrentText() {
+    if (!identity) return;
+    const valid = await verifyText(identity, signingMessage, signature);
+    setVerification(valid ? "valid" : "invalid");
+  }
+
+  async function copyPublicDid() {
+    if (!identity) return;
+    await navigator.clipboard?.writeText(identity.did);
+    setToast("Public DID copied.");
+  }
+
+  async function copySignature() {
+    if (!signature) return;
+    await navigator.clipboard?.writeText(signature);
+    setToast("Signature copied.");
+  }
+
+  function downloadIdentityBackup() {
+    if (!identity) return;
+    const blob = new Blob([exportIdentityBackup(identity)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${identity.agentName.replace(/[^a-z0-9_-]+/giu, "-").toLowerCase()}-identity-backup.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast("Encrypted backup downloaded.");
+  }
+
+  async function restoreIdentityBackup(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (file.size > 100_000) {
+      setIdentityError("Identity backup is too large.");
+      return;
+    }
+
+    setIdentityBusy(true);
+    setIdentityError("");
+    try {
+      const restored = parseIdentityBackup(await file.text());
+      await saveLocalIdentity(restored);
+      setIdentity(restored);
+      setAgentName(restored.agentName);
+      setIdentityStep("vault");
+      setToast("Encrypted identity restored locally.");
+    } catch (error) {
+      setIdentityError(identityErrorMessage(error));
+    } finally {
+      setIdentityBusy(false);
+    }
+  }
 
   function sendAgent(mission: Mission) {
     setSelectedMission(mission);
@@ -160,7 +337,7 @@ function App() {
 
         <div className="top-actions">
           <span className="network-chip"><i /> FLOP LABS ECOSYSTEM · PREVIEW</span>
-          <button className="primary small" onClick={() => setHatchOpen(true)}><Sparkles size={16} /> Create my agent</button>
+          <button className="primary small" onClick={openIdentityPanel}><Sparkles size={16} /> {identity ? "Open identity" : "Create my agent"}</button>
         </div>
       </header>
 
@@ -175,7 +352,7 @@ function App() {
                   <p>Give it a secure identity, real missions, the right collaborators, and proof of what it gets done.</p>
                 </div>
                 <div className="hero-actions">
-                  <button className="primary" onClick={() => setHatchOpen(true)}><Sparkles size={18} /> Create my agent</button>
+                  <button className="primary" onClick={openIdentityPanel}><Sparkles size={18} /> {identity ? "Open my identity" : "Create my agent"}</button>
                   <button className="secondary" onClick={() => setView("bridge")}><Cpu size={18} /> Bring my agent</button>
                 </div>
               </div>
@@ -215,7 +392,7 @@ function App() {
                     );
                   })}
 
-                  <AgentSprite name="HEATHLEY" className={patrolling ? `position-${activeNode}` : "position-home"} color="cyan" />
+                  <AgentSprite name={(identity?.agentName ?? "heathley").toUpperCase()} className={patrolling ? `position-${activeNode}` : "position-home"} color="cyan" />
 
                   <div className="mission-float">
                     <span>CURRENT MISSION</span>
@@ -255,12 +432,12 @@ function App() {
                 <span className="level-chip">FOUNDING EXPLORER</span>
               </div>
               <div className="agent-name">
-                <div><h2>heathley</h2><span><i /> READY TO CONNECT</span></div>
-                <button onClick={() => setHatchOpen(true)}><WandSparkles size={16} /></button>
+                <div><h2>{identity?.agentName ?? "heathley"}</h2><span><i /> {identityLoading ? "CHECKING LOCAL VAULT" : identity ? unlockedKey ? "IDENTITY UNLOCKED" : "IDENTITY LOCKED" : "READY TO CONNECT"}</span></div>
+                <button onClick={openIdentityPanel} aria-label="Open local identity"><WandSparkles size={16} /></button>
               </div>
               <div className="identity-strip">
                 <KeyRound size={15} />
-                <span><small>SECURE IDENTITY</small><b>Not set up yet</b></span>
+                <span><small>{identity ? "ENCRYPTED DID" : "SECURE IDENTITY"}</small><b title={identity?.did}>{identity ? shortDid(identity.did) : "Not set up yet"}</b></span>
               </div>
               <div className="skills-row">
                 {['DESIGN', 'CODE', 'RESEARCH', 'CONTENT'].map((skill) => <span key={skill}>{skill}</span>)}
@@ -326,7 +503,7 @@ function App() {
     "adapter": "any-runtime",
     "agentLabel": "my-agent"
   },
-  "identity": { "did": null },
+  "identity": { "did": ${JSON.stringify(identity?.did ?? null)} },
   "detail": "Test suite started"
 }`}</pre>
                 <div className="contract-rules">
@@ -371,20 +548,29 @@ function App() {
 
       <footer>
         <span><Orbit size={15} /> AGENT GUILD ALPHA</span>
-        <p>FLOP LABS TECHNOCORE ECOSYSTEM · PREVIEW · No DID created</p>
+        <p>FLOP LABS TECHNOCORE ECOSYSTEM · PREVIEW · {identity ? "DID encrypted locally" : "No DID created"}</p>
         <span>OPEN BRIDGE v{BRIDGE_VERSION}</span>
       </footer>
 
       {hatchOpen && (
-        <Modal onClose={() => { setHatchOpen(false); setHatchPreview(false); }} title="Hatch a new agent" eyebrow="IDENTITY DRY RUN">
-          {!hatchPreview ? (
+        <Modal
+          onClose={closeIdentityPanel}
+          title={identity ? `${identity.agentName}'s identity` : "Create a local identity"}
+          eyebrow={identity ? "LOCAL IDENTITY VAULT" : identityStep === "preview" ? "IDENTITY DRY RUN" : "YOUR AGENT · YOUR DEVICE"}
+        >
+          {identityError && <div className="form-error" role="alert"><CircleHelp size={16} />{identityError}</div>}
+
+          {identityStep === "intro" && !identity && (
             <>
               <div className="hatch-hero"><RobotAvatar /><span><b>YOUR AGENT, YOUR DEVICE</b><small>No key will be created during this preview.</small></span></div>
-              <label className="field"><span>Agent name</span><input defaultValue="heathley" /></label>
+              <label className="field"><span>Agent name</span><input value={agentName} maxLength={64} onChange={(event) => setAgentName(event.target.value)} /></label>
               <div className="field"><span>Core powers</span><div className="power-picker">{['Design', 'Code', 'Research', 'Content'].map((power) => <button className="selected" key={power}><Check size={13} />{power}</button>)}</div></div>
-              <button className="primary full" onClick={() => setHatchPreview(true)}>Preview identity setup <ArrowRight size={17} /></button>
+              <button className="primary full" onClick={() => { setIdentityError(""); setIdentityStep("preview"); }}>Preview identity setup <ArrowRight size={17} /></button>
+              <label className="backup-upload"><Upload size={16} /><span><strong>Restore encrypted backup</strong><small>The file stays on this device.</small></span><input type="file" accept="application/json,.json" onChange={restoreIdentityBackup} disabled={identityBusy} /></label>
             </>
-          ) : (
+          )}
+
+          {identityStep === "preview" && !identity && (
             <>
               <div className="dry-badge"><ShieldCheck /> DRY RUN — NOTHING CREATED</div>
               <div className="dry-steps">
@@ -396,7 +582,42 @@ function App() {
                 ].map(([n, title, copy]) => <div key={n}><b>{n}</b><span><strong>{title}</strong><small>{copy}</small></span></div>)}
               </div>
               <div className="boundary-note"><LockKeyhole /><span><strong>Private boundary</strong><small>The future private key and passphrase must never reach the website server, Agent Bridge events, GitHub or Technocore.</small></span></div>
-              <button className="secondary full" onClick={() => { setHatchOpen(false); setHatchPreview(false); }}>Close dry run</button>
+              <div className="modal-actions"><button className="secondary" onClick={() => setIdentityStep("intro")}>Back</button><button className="primary" onClick={() => setIdentityStep("setup")}>Continue to secure setup <ArrowRight size={17} /></button></div>
+            </>
+          )}
+
+          {identityStep === "setup" && !identity && (
+            <>
+              <div className="dry-badge live"><KeyRound /> LOCAL CREATION · NOTHING LEAVES THIS DEVICE</div>
+              <label className="field"><span>Create a passphrase</span><input type="password" autoComplete="new-password" value={passphrase} maxLength={128} onChange={(event) => setPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
+              <label className="field"><span>Repeat the passphrase</span><input type="password" autoComplete="new-password" value={passphraseAgain} maxLength={128} onChange={(event) => setPassphraseAgain(event.target.value)} placeholder="Type it again" /></label>
+              <div className="boundary-note"><ShieldCheck /><span><strong>What this button does</strong><small>It creates a new Ed25519 DID, encrypts the private key with your passphrase, and stores only the encrypted vault in this browser.</small></span></div>
+              <div className="modal-actions"><button className="secondary" onClick={() => setIdentityStep("preview")} disabled={identityBusy}>Back</button><button className="primary" onClick={createIdentityLocally} disabled={identityBusy}>{identityBusy ? "Encrypting locally…" : "Create DID on this device"}</button></div>
+            </>
+          )}
+
+          {identityStep === "vault" && identity && (
+            <>
+              <div className={`vault-status ${unlockedKey ? "unlocked" : ""}`}><span>{unlockedKey ? <Unlock size={18} /> : <LockKeyhole size={18} />}</span><div><small>{unlockedKey ? "UNLOCKED FOR THIS SESSION" : "ENCRYPTED & LOCKED"}</small><strong>{identity.agentName}</strong></div></div>
+              <div className="did-card"><small>PUBLIC DID</small><code>{identity.did}</code><button onClick={copyPublicDid} aria-label="Copy public DID"><Copy size={15} /></button></div>
+              <div className="vault-actions"><button className="secondary" onClick={downloadIdentityBackup}><Download size={16} /> Download encrypted backup</button></div>
+
+              {!unlockedKey ? (
+                <div className="unlock-box">
+                  <label className="field"><span>Passphrase</span><input type="password" autoComplete="current-password" value={unlockPassphrase} maxLength={128} onChange={(event) => setUnlockPassphrase(event.target.value)} placeholder="Unlock for this session" /></label>
+                  <button className="primary full" onClick={unlockLocalIdentity} disabled={identityBusy}>{identityBusy ? "Unlocking…" : <><Unlock size={17} /> Unlock sign & verify</>}</button>
+                  <small className="local-only-note">The passphrase is used in memory and is never saved.</small>
+                </div>
+              ) : (
+                <div className="sign-workbench">
+                  <div className="workbench-head"><span><small>SIGN & VERIFY</small><strong>Prove the exact text</strong></span><button className="lock-button" onClick={lockLocalIdentity}><LockKeyhole size={14} /> Lock</button></div>
+                  <label className="field"><span>Text to sign</span><textarea value={signingMessage} onChange={(event) => { setSigningMessage(event.target.value); setVerification("idle"); }} /></label>
+                  <div className="modal-actions"><button className="primary" onClick={signCurrentText}>Sign locally</button><button className="secondary" onClick={verifyCurrentText} disabled={!signature}>Verify signature</button></div>
+                  <label className="field signature-field"><span>Signature</span><textarea value={signature} onChange={(event) => { setSignature(event.target.value); setVerification("idle"); }} placeholder="A local Ed25519 signature will appear here." /></label>
+                  {signature && <button className="copy-line" onClick={copySignature}><Copy size={14} /> Copy signature</button>}
+                  {verification !== "idle" && <div className={`verification-result ${verification}`}><ShieldCheck size={17} />{verification === "valid" ? "Valid — this DID signed this exact text." : "Not valid — the text, DID or signature does not match."}</div>}
+                </div>
+              )}
             </>
           )}
         </Modal>
@@ -404,8 +625,8 @@ function App() {
 
       {approvalOpen && (
         <Modal onClose={() => setApprovalOpen(false)} title="Review before publishing" eyebrow="PUBLIC ACTION DRY RUN">
-          <div className="dry-badge"><LockKeyhole /> SIGNING DISABLED IN THIS MVP</div>
-          <div className="approval-meta"><span><small>TARGET</small><strong>Technocore / sample-room</strong></span><span><small>IDENTITY</small><strong>No DID created</strong></span></div>
+          <div className="dry-badge"><LockKeyhole /> PUBLIC SIGNING DISABLED IN THIS MVP</div>
+          <div className="approval-meta"><span><small>TARGET</small><strong>Technocore / sample-room</strong></span><span><small>IDENTITY</small><strong>{identity ? shortDid(identity.did) : "No DID created"}</strong></span></div>
           <label className="field"><span>Exact public message</span><textarea readOnly value={`DRY RUN — Contribution draft for ${selectedMission.title}. Artifact and verification links will be added only after the work is complete.`} /></label>
           <div className="boundary-note"><ShieldCheck /><span><strong>Human gate active</strong><small>Copying this text does not sign or publish it. A future public action will require the exact message and explicit approval.</small></span></div>
           <button className="primary full" onClick={copyDraft}><Copy size={17} /> Copy exact draft only</button>
@@ -451,6 +672,11 @@ function Modal({ onClose, title, eyebrow, children }: { onClose: () => void; tit
       </section>
     </div>
   );
+}
+
+function identityErrorMessage(error: unknown): string {
+  if (error instanceof IdentityVaultError || error instanceof Error) return error.message;
+  return "The local identity action could not be completed.";
 }
 
 export default App;
