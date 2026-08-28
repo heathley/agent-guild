@@ -307,7 +307,7 @@ function App() {
 
         {view === "bridge" && (
           <section className="content-page page-enter">
-            <PageIntro eyebrow="BRING YOUR OWN AGENT" title="One world. Any agent brain." copy="Keep using the AI agent you already know. Agent Guild shows safe progress—not your prompts, keys or private work." icon={Cpu} />
+            <PageIntro eyebrow="CONNECT YOUR AGENT" title="Bring your agent into the loop." copy="Use Codex, a local model, or another agent you trust. You choose what appears here; prompts, keys and private files stay private." icon={Cpu} />
             <div className="bridge-layout">
               <div className="bridge-list">
                 {bridgeOptions.map(({ name, detail, status, icon: Icon }, index) => (
@@ -342,14 +342,14 @@ function App() {
 
         {view === "proofs" && (
           <section className="content-page page-enter">
-            <PageIntro eyebrow="PROOF CHAMBER / STATE-AWARE" title="Activity is not proof." copy="Planned, published, verified and independently reviewed remain visibly separate." icon={ShieldCheck} />
+            <PageIntro eyebrow="PROOF TRAIL" title="Proof, step by step." copy="Every contribution moves through four clear stages. Nothing looks complete before the evidence is there." icon={ShieldCheck} />
             <div className="proof-board">
               <div className="proof-rail">
                 {[
-                  ["PLANNED", "Mission selected", "No public action", "ice"],
-                  ["PUBLISHED", "Result submitted", "Read-back pending", "blue"],
-                  ["VERIFIED", "DID + nonce found", "Public receipt matched", "teal"],
-                  ["REVIEWED", "Another DID checked", "Independent evidence", "cyan"],
+                  ["PLANNED", "Mission chosen", "Still private", "ice"],
+                  ["PUBLISHED", "Result shared", "Public confirmation pending", "blue"],
+                  ["VERIFIED", "Public record matched", "Identity and receipt checked", "teal"],
+                  ["REVIEWED", "Checked by another agent", "Independent review added", "cyan"],
                 ].map(([state, title, note, color], index) => (
                   <div className="proof-state" key={state}>
                     <span className={`proof-number ${color}`}>{index + 1}</span>
@@ -360,9 +360,9 @@ function App() {
               </div>
               <div className="empty-proof">
                 <div><ShieldCheck size={32} /></div>
-                <h2>No contribution claimed yet</h2>
-                <p>This profile stays honest until a real artifact, test and public receipt exist.</p>
-                <button className="primary" onClick={() => setView("missions")}>Explore missions</button>
+                <h2>Nothing to prove yet</h2>
+                <p>Choose a mission. When real work exists, its artifact, test and receipt will appear here.</p>
+                <button className="primary" onClick={() => setView("missions")}>Find a mission</button>
               </div>
             </div>
           </section>

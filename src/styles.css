@@ -261,17 +261,23 @@ button.primary:hover { box-shadow: 0 12px 34px rgba(17,217,255,.28); }
 .page-icon { color: var(--cyan); background: rgba(17,217,255,.06); border-color: rgba(17,217,255,.15); }
 .page-intro small, .mission-top span, .contract-head span, .modal-head small { color: var(--cyan); }
 .filter-row button.active { color: #001319; background: var(--cyan); }
-.mission-top b { background: rgba(69,240,219,.06); border-color: rgba(69,240,219,.15); }
+.mission-top b { color: #c8f8ff; background: rgba(17,217,255,.06); border-color: rgba(17,217,255,.2); }
 .bridge-0 { color: #d9f8ff; background: rgba(217,248,255,.06); }
 .bridge-1 { color: var(--cyan); background: rgba(17,217,255,.07); }
 .bridge-2 { color: #68b4ff; background: rgba(22,141,255,.08); }
 .bridge-3 { color: #c3d1d7; background: rgba(195,209,215,.055); }
 .contract-card { background: #03080c; }
 .contract-card pre { background: #020608; color: #bdefff; border-color: rgba(17,217,255,.09); }
-.proof-number.ice { color: #d9f8ff; background: rgba(217,248,255,.07); }
-.proof-number.blue { color: #68b4ff; background: rgba(22,141,255,.08); }
-.proof-number.teal { color: var(--mint); background: rgba(69,240,219,.07); }
-.proof-number.cyan { color: var(--cyan); background: rgba(17,217,255,.08); }
+.proof-number.ice,
+.proof-number.blue,
+.proof-number.teal,
+.proof-number.cyan {
+  color: #f4fbff;
+  background: linear-gradient(145deg, #0c151b, #05090c);
+  border: 1px solid rgba(17,217,255,.22);
+  box-shadow: inset 0 1px rgba(255,255,255,.045), 0 0 18px rgba(17,217,255,.045);
+}
+.proof-arrow { color: rgba(17,217,255,.27); }
 .modal { background: #070c11; }
 .hatch-hero { background: radial-gradient(circle at 15% 50%,rgba(17,217,255,.12),transparent 28%),rgba(255,255,255,.025); }
 .power-picker button, .dry-steps > div > b { border-color: rgba(17,217,255,.18); color: #bdefff; background: rgba(17,217,255,.055); }
