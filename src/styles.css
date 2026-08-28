@@ -278,6 +278,99 @@ button.primary:hover { box-shadow: 0 12px 34px rgba(17,217,255,.28); }
 .boundary-note { color: var(--mint); background: rgba(69,240,219,.045); border-color: rgba(69,240,219,.13); }
 .toast { color: #c8fff7; background: #06221f; border-color: rgba(69,240,219,.23); }
 
+/* One FLOP palette; motion gives every station its own character. */
+.world-node.station { color: #7b8991; }
+.world-node.station .node-icon {
+  position: relative;
+  color: currentColor;
+  background: linear-gradient(150deg, #0b1217, #04080b);
+  border-color: rgba(228, 245, 249, .17);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .46), inset 0 1px rgba(255, 255, 255, .045);
+}
+.world-node.station .node-orbit { border-color: #98a5ac; opacity: .11; }
+.world-node.station strong { color: currentColor; }
+.world-node.station > small { color: #73828b; }
+.world-node.station:hover,
+.world-node.station:focus-visible { color: #f4fbff; }
+.world-node.station:hover .node-icon,
+.world-node.station:focus-visible .node-icon {
+  border-color: rgba(244, 251, 255, .44);
+  box-shadow: 0 13px 34px rgba(0, 0, 0, .5), 0 0 23px rgba(244, 251, 255, .08);
+}
+.world-node.station.active,
+.world-node.station.completed { color: var(--cyan); }
+.world-node.station.active .node-icon {
+  border-color: rgba(17, 217, 255, .68);
+  box-shadow: 0 13px 34px rgba(0, 0, 0, .5), 0 0 28px rgba(17, 217, 255, .24), inset 0 0 18px rgba(17, 217, 255, .055);
+}
+.world-node.station.completed .node-icon { border-color: rgba(17, 217, 255, .42); }
+.world-node.station.completed .node-icon::after {
+  content: "✓";
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #041014;
+  background: #f4fbff;
+  border: 2px solid #061016;
+  box-shadow: 0 0 12px rgba(17, 217, 255, .38);
+  font: 900 9px/1 "DM Sans Variable", sans-serif;
+}
+
+.routes.energized path,
+.routes.energized ellipse {
+  stroke: rgba(17, 217, 255, .48);
+  stroke-dasharray: 2 1.8;
+  animation: routeEnergy 3.4s linear infinite;
+}
+.world-node.spot.active .node-orbit { animation: stationRadar 1.55s ease-out infinite; }
+.world-node.pick.active .node-icon svg { animation: stationPick 1.7s ease-in-out infinite; }
+.world-node.make .node-icon::before {
+  content: "";
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  right: 7px;
+  top: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  opacity: 0;
+}
+.world-node.make.active .node-icon::before { animation: stationSpark 1.35s ease-out infinite; }
+.world-node.team.active .node-orbit { animation: stationCall 1.8s ease-out infinite; }
+.world-node.team.active .node-icon svg { animation: stationTeam 1.8s ease-in-out infinite; }
+.world-node.prove.active .node-icon svg { animation: stationLock 1.6s ease-in-out infinite; }
+
+@keyframes routeEnergy { to { stroke-dashoffset: -18; } }
+@keyframes stationRadar {
+  0% { opacity: .55; transform: scale(.72); }
+  75%, 100% { opacity: 0; transform: scale(1.32); }
+}
+@keyframes stationPick {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  42% { transform: translateY(-3px) rotate(-5deg); }
+  58% { transform: translateY(-3px) rotate(5deg); }
+}
+@keyframes stationSpark {
+  0% { opacity: 0; transform: translate(0, 4px) scale(.6); box-shadow: 0 0 transparent; }
+  28% { opacity: 1; box-shadow: -9px 5px 0 -1px #f4fbff, -4px -7px 0 -1px var(--cyan), 5px -4px 0 -1px #f4fbff; }
+  100% { opacity: 0; transform: translate(4px, -9px) scale(1.15); box-shadow: -14px 9px 0 -1px transparent, -7px -12px 0 -1px transparent, 9px -8px 0 -1px transparent; }
+}
+@keyframes stationCall {
+  0% { opacity: .48; transform: scale(.76); }
+  80%, 100% { opacity: 0; transform: scale(1.42); }
+}
+@keyframes stationTeam { 50% { transform: scale(1.12); } }
+@keyframes stationLock {
+  0%, 100% { transform: scale(1); }
+  45% { transform: scale(.86); }
+  65% { transform: scale(1.13); }
+}
+
 @media (max-width: 720px) {
   .mini-mascot { width: 38px; height: 36px; }
   .mini-screen { width: 27px; height: 21px; }

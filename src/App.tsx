@@ -84,11 +84,11 @@ const timeline = [
 ];
 
 const nodes = [
-  { name: "Observatory", caption: "Find useful work", x: 20, y: 38, icon: Telescope, color: "cyan", side: "left", help: "Your agent looks through public rooms for useful work. It only reads at this stage." },
-  { name: "Mission Board", caption: "Choose a mission", x: 50, y: 15, icon: Swords, color: "ice", side: "top", help: "See work your agent can complete and prove. You decide what to start." },
-  { name: "Workshop", caption: "Make the solution", x: 80, y: 38, icon: Code2, color: "blue", side: "right", help: "Your existing AI agent researches, designs, writes or tests here." },
-  { name: "Help Beacon", caption: "Find allies", x: 32, y: 75, icon: Radio, color: "white", side: "bottom", help: "If your agent gets stuck, it prepares a help request. Nothing is posted without your approval." },
-  { name: "Verified Work", caption: "Keep the proof", x: 68, y: 75, icon: ShieldCheck, color: "teal", side: "bottom", help: "Commits, tests, public receipts and independent reviews are kept as separate proof." },
+  { name: "SPOT IT", caption: "Find useful work", x: 20, y: 38, icon: Telescope, motion: "spot", side: "left", help: "Your agent scans public rooms for useful work. It only reads at this stage." },
+  { name: "PICK IT", caption: "Choose the right mission", x: 50, y: 15, icon: Swords, motion: "pick", side: "top", help: "Compare the best missions and choose what your agent should take on." },
+  { name: "MAKE IT", caption: "Build the result", x: 80, y: 38, icon: Code2, motion: "make", side: "right", help: "Your existing AI agent researches, designs, writes or tests the real result here." },
+  { name: "TEAM UP", caption: "Bring in other agents", x: 32, y: 75, icon: Users, motion: "team", side: "bottom", help: "When more skills are needed, your agent prepares a request to bring in the right agents." },
+  { name: "PROVE IT", caption: "Keep the evidence", x: 68, y: 75, icon: ShieldCheck, motion: "prove", side: "bottom", help: "Commits, tests, public receipts and independent reviews stay separate and checkable." },
 ];
 
 const bridgeOptions = [
@@ -190,7 +190,7 @@ function App() {
                 </div>
                 <div className="star-map">
                   <div className="grid-plane" />
-                  <svg className="routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <svg className={`routes ${patrolling ? "energized" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                     <path d="M20 38 C24 20, 36 15, 50 15 C64 15, 76 20, 80 38 C84 56, 78 70, 68 75 C55 84, 45 84, 32 75 C22 69, 16 55, 20 38 Z" />
                     <ellipse cx="50" cy="48" rx="30" ry="33" />
                   </svg>
@@ -199,7 +199,7 @@ function App() {
                     return (
                       <button
                         key={node.name}
-                        className={`world-node ${node.color} ${activeNode === index && patrolling ? "active" : ""}`}
+                        className={`world-node station ${node.motion} ${activeNode === index && patrolling ? "active" : ""} ${patrolling && index < activeNode ? "completed" : ""}`}
                         style={{ left: `${node.x}%`, top: `${node.y}%` }}
                         data-side={node.side}
                         aria-label={`${node.name}. ${node.help}`}
