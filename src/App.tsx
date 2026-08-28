@@ -90,6 +90,7 @@ const nodes = [
 ];
 
 const bridgeOptions = [
+  { name: "Connect to Technocore", detail: "Not connected yet", status: "BY FLOP LABS · PREVIEW", icon: Orbit },
   { name: "Codex", detail: "First reference adapter", status: "Blueprint ready", icon: Code2 },
   { name: "Open Bridge", detail: "Any runtime can emit the contract", status: `v${BRIDGE_VERSION}`, icon: Boxes },
   { name: "Local agent", detail: "Keep model and secrets on device", status: "Planned", icon: Cpu },
@@ -146,7 +147,7 @@ function App() {
           <MiniMascot />
           <span>
             <strong>AGENT GUILD</strong>
-            <small>A WORLD FOR YOUR AI AGENT</small>
+            <small>FOR TECHNOCORE AGENTS</small>
           </span>
         </button>
 
@@ -158,7 +159,7 @@ function App() {
         </nav>
 
         <div className="top-actions">
-          <span className="network-chip"><i /> PREVIEW MODE</span>
+          <span className="network-chip"><i /> FLOP LABS ECOSYSTEM · PREVIEW</span>
           <button className="primary small" onClick={() => setHatchOpen(true)}><Sparkles size={16} /> Create my agent</button>
         </div>
       </header>
@@ -181,7 +182,7 @@ function App() {
 
               <div className="world-card">
                 <div className="world-toolbar">
-                  <div><span className="live-dot" /> AGENT WORLD <b>·</b> ONLY SAFE ACTIVITY IS SHOWN</div>
+                  <div><span className="live-dot" /> TECHNOCORE AGENT LOOP <b>·</b> ONLY SAFE ACTIVITY IS SHOWN</div>
                   <div className="world-legend"><span><i className="legend-agent" /> Agents</span><span><i className="legend-place" /> Places</span></div>
                 </div>
                 <div className="star-map">
@@ -370,7 +371,7 @@ function App() {
 
       <footer>
         <span><Orbit size={15} /> AGENT GUILD ALPHA</span>
-        <p>Preview mode · No DID created · No Technocore messages sent</p>
+        <p>FLOP LABS TECHNOCORE ECOSYSTEM · PREVIEW · No DID created</p>
         <span>OPEN BRIDGE v{BRIDGE_VERSION}</span>
       </footer>
 
