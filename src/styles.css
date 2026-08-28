@@ -99,8 +99,7 @@ main { min-height: calc(100vh - 124px); }
 .sprite-face i { width: 4px; height: 6px; border-radius: 2px; background: currentColor; box-shadow: 0 0 6px currentColor; }
 .agent-sprite b { font-size: 8px; letter-spacing: .08em; }.agent-sprite small { color: var(--muted); font-size: 7px; }
 .agent-sprite.orange { color: var(--orange); }.agent-sprite.cyan { color: var(--cyan); }.agent-sprite.mint { color: var(--mint); }
-.agent-sprite.position-home { left: 53%; top: 50%; }.agent-sprite.position-0 { left: 24%; top: 40%; }.agent-sprite.position-1 { left: 50%; top: 23%; }.agent-sprite.position-2 { left: 76%; top: 40%; }.agent-sprite.position-3 { left: 36%; top: 72%; }.agent-sprite.position-4 { left: 65%; top: 72%; }
-.agent-sprite.visitor-one { left: 81%; top: 21%; transform: scale(.88); opacity: .72; animation: drift 5s ease-in-out infinite; }.agent-sprite.visitor-two { left: 76%; top: 76%; transform: scale(.88); opacity: .62; animation: drift 6s ease-in-out 1s infinite; }
+.agent-sprite.position-home { left: 66%; top: 57%; }.agent-sprite.position-0 { left: 29%; top: 31%; }.agent-sprite.position-1 { left: 59%; top: 23%; }.agent-sprite.position-2 { left: 71%; top: 49%; }.agent-sprite.position-3 { left: 39%; top: 66%; }.agent-sprite.position-4 { left: 61%; top: 66%; }
 .mission-float { position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%); width: 230px; padding: 14px 16px; border-radius: 15px; text-align: center; background: rgba(9,10,20,.86); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(12px); box-shadow: 0 18px 40px rgba(0,0,0,.3); }
 .mission-float span { color: var(--violet); font-size: 7px; letter-spacing: .12em; font-weight: 800; }.mission-float strong, .mission-float small { display: block; }.mission-float strong { font-size: 11px; margin: 5px 0; }.mission-float small { color: var(--muted); font-size: 8px; }
 
@@ -149,7 +148,6 @@ footer { min-height: 50px; padding: 0 28px; border-top: 1px solid var(--border);
 @keyframes pulse { 50% { opacity: .38; box-shadow: 0 0 5px var(--mint); } }
 @keyframes orbitPulse { 50% { transform: scale(1.18); opacity: .12; } }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes drift { 50% { transform: translateY(-8px) scale(.88); } }
 @keyframes robotFloat { 50% { transform: translateY(-6px); } }
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%,10px); } }
@@ -165,7 +163,7 @@ footer { min-height: 50px; padding: 0 28px; border-top: 1px solid var(--border);
 @media (max-width: 720px) {
   .topbar { height: 64px; padding: 0 16px; }.brand small { display: none; }.mini-mascot { width: 38px; height: 36px; }.top-actions .small { font-size: 0; width: 38px; padding: 0; }.top-actions .small svg { margin: 0; }
   .nav-pills { width: calc(100% - 24px); justify-content: space-around; }.nav-pills button { flex-direction: column; gap: 3px; padding: 7px 11px; font-size: 8px; }
-  .world-main { padding: 30px 14px 20px; overflow: hidden; }.hero-row { align-items: flex-start; flex-direction: column; width: 100%; }.hero-row h1 { max-width: 100%; font-size: clamp(32px, 9.4vw, 38px); overflow-wrap: anywhere; }.hero-row p { max-width: 100%; font-size: 12px; line-height: 1.55; }.hero-actions { width: 100%; flex-direction: column; }.hero-actions button { width: 100%; flex: none; padding: 0 10px; }.world-legend { display: none; }.star-map { height: 500px; }.world-node { transform: translate(-50%,-50%) scale(.8); }.mission-float { width: 164px; padding-inline: 9px; }.node-tooltip { width: 185px; }.world-node[data-side] .node-tooltip { left: 50%; right: auto; top: 84px; bottom: auto; transform: translateX(-50%); }.world-node[data-side="bottom"] .node-tooltip { top: auto; bottom: 84px; }.agent-sprite.visitor-one,.agent-sprite.visitor-two { display: none; }.mini-panels { grid-template-columns: 1fr; }
+  .world-main { padding: 30px 14px 20px; overflow: hidden; }.hero-row { align-items: flex-start; flex-direction: column; width: 100%; }.hero-row h1 { max-width: 100%; font-size: clamp(32px, 9.4vw, 38px); overflow-wrap: anywhere; }.hero-row p { max-width: 100%; font-size: 12px; line-height: 1.55; }.hero-actions { width: 100%; flex-direction: column; }.hero-actions button { width: 100%; flex: none; padding: 0 10px; }.world-legend { display: none; }.star-map { height: 500px; }.world-node { transform: translate(-50%,-50%) scale(.8); }.mission-float { width: 164px; padding-inline: 9px; }.node-tooltip { width: 185px; }.world-node[data-side] .node-tooltip { left: 50%; right: auto; top: 84px; bottom: auto; transform: translateX(-50%); }.world-node[data-side="bottom"] .node-tooltip { top: auto; bottom: 84px; }.mini-panels { grid-template-columns: 1fr; }
   .agent-console { display: block; padding: 22px 17px; }.agent-portrait { height: 170px; }.timeline { grid-template-columns: 1fr; }.approval-button { margin-top: 14px; }
   .content-page { padding: 36px 14px 100px; }.page-intro { gap: 12px; }.page-icon { width: 42px; height: 42px; border-radius: 13px; }.page-intro h1 { font-size: 39px; }.mission-grid,.bridge-layout { grid-template-columns: 1fr; }.mission-card { min-height: 350px; }.proof-rail { grid-template-columns: 1fr; }.proof-state { min-height: 60px; }
   footer { display: none; }.approval-meta { grid-template-columns: 1fr; }

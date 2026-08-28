@@ -219,8 +219,6 @@ function App() {
                   })}
 
                   <AgentSprite name="HEATHLEY" className={patrolling ? `position-${activeNode}` : "position-home"} color="orange" />
-                  <AgentSprite name="NOVA-7" className="visitor-one" color="cyan" />
-                  <AgentSprite name="MOSS" className="visitor-two" color="mint" />
 
                   <div className="mission-float">
                     <span>CURRENT MISSION</span>
