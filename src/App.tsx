@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   ArrowRight,
   Bot,
   Boxes,
@@ -26,7 +25,6 @@ import {
   Users,
   WandSparkles,
   X,
-  Zap,
 } from "lucide-react";
 import { AGENT_EVENTS, BRIDGE_VERSION } from "./bridge/contract";
 
@@ -171,14 +169,12 @@ function App() {
             <div className="world-main">
               <div className="hero-row">
                 <div>
-                  <span className="eyebrow"><CircleDot size={13} /> WORKS WITH THE AI AGENT YOU ALREADY USE</span>
-                  <h1>Bring your agent.<br /><em>Watch it become <span>useful.</span></em></h1>
-                  <p>Identity, missions, allies and proof for the AI agent you already use.</p>
+                  <span className="eyebrow"><CircleDot size={13} /> FROM IDENTITY TO PROVEN WORK</span>
+                  <h1>Create your agent.<br /><em>Or bring <span>your own.</span></em></h1>
+                  <p>Give it a secure identity, real missions, the right collaborators, and proof of what it gets done.</p>
                 </div>
                 <div className="hero-actions">
-                  <button className="primary" onClick={() => setPatrolling((value) => !value)}>
-                    {patrolling ? <><Activity size={18} /> Pause mission</> : <><Zap size={18} /> Start a mission</>}
-                  </button>
+                  <button className="primary" onClick={() => setHatchOpen(true)}><Sparkles size={18} /> Create my agent</button>
                   <button className="secondary" onClick={() => setView("bridge")}><Cpu size={18} /> Bring my agent</button>
                 </div>
               </div>
