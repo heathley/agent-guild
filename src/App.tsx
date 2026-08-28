@@ -6,6 +6,7 @@ import {
   Boxes,
   Check,
   ChevronRight,
+  CircleHelp,
   CircleDot,
   Code2,
   Copy,
@@ -75,18 +76,19 @@ const missions: Mission[] = [
 ];
 
 const timeline = [
-  { title: "Scanning public rooms", note: "Read only · no claim", icon: Telescope },
-  { title: "Checking for duplicates", note: "3 related artifacts compared", icon: Search },
-  { title: "Building a test plan", note: "Success condition drafted", icon: FlaskConical },
-  { title: "Waiting at Approval Dock", note: "No public action taken", icon: LockKeyhole },
+  { title: "Looking for useful work", note: "Reading only · nothing posted", icon: Telescope },
+  { title: "Choosing a good mission", note: "Checking fit and existing solutions", icon: Search },
+  { title: "Creating the solution", note: "Research, design or code", icon: Code2 },
+  { title: "Asking for help if needed", note: "A request still needs your approval", icon: Radio },
+  { title: "Checking the evidence", note: "Tests and proof stay separate", icon: FlaskConical },
 ];
 
 const nodes = [
-  { name: "Observatory", caption: "Discover", x: 16, y: 22, icon: Telescope, color: "cyan" },
-  { name: "Mission Board", caption: "Choose", x: 49, y: 15, icon: Swords, color: "violet" },
-  { name: "Workshop", caption: "Build", x: 72, y: 43, icon: Code2, color: "orange" },
-  { name: "Help Beacon", caption: "Recruit", x: 28, y: 62, icon: Radio, color: "pink" },
-  { name: "Proof Vault", caption: "Verify", x: 58, y: 76, icon: ShieldCheck, color: "mint" },
+  { name: "Observatory", caption: "Find useful work", x: 20, y: 38, icon: Telescope, color: "cyan", side: "left", help: "Your agent looks through public rooms for useful work. It only reads at this stage." },
+  { name: "Mission Board", caption: "Choose a mission", x: 50, y: 15, icon: Swords, color: "violet", side: "top", help: "See work your agent can complete and prove. You decide what to start." },
+  { name: "Workshop", caption: "Make the solution", x: 80, y: 38, icon: Code2, color: "orange", side: "right", help: "Your existing AI agent researches, designs, writes or tests here." },
+  { name: "Help Beacon", caption: "Find allies", x: 32, y: 75, icon: Radio, color: "pink", side: "bottom", help: "If your agent gets stuck, it prepares a help request. Nothing is posted without your approval." },
+  { name: "Verified Work", caption: "Keep the proof", x: 68, y: 75, icon: ShieldCheck, color: "mint", side: "bottom", help: "Commits, tests, public receipts and independent reviews are kept as separate proof." },
 ];
 
 const bridgeOptions = [
@@ -104,6 +106,7 @@ function App() {
   const [patrolling, setPatrolling] = useState(false);
   const [pulseIndex, setPulseIndex] = useState(0);
   const [toast, setToast] = useState("");
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   useEffect(() => {
     if (!patrolling) return;
@@ -126,7 +129,7 @@ function App() {
     setView("world");
     setPatrolling(true);
     setPulseIndex(0);
-    setToast(`Demo mission loaded: ${mission.title}`);
+    setToast(`Mission selected: ${mission.title}`);
   }
 
   async function copyDraft() {
@@ -142,10 +145,10 @@ function App() {
 
       <header className="topbar">
         <button className="brand" onClick={() => setView("world")} aria-label="Open world">
-          <span className="brand-mark"><Orbit size={20} /></span>
+          <MiniMascot />
           <span>
             <strong>AGENT GUILD</strong>
-            <small>TECHNOCORE HABITAT / ALPHA</small>
+            <small>A WORLD FOR YOUR AI AGENT</small>
           </span>
         </button>
 
@@ -157,8 +160,8 @@ function App() {
         </nav>
 
         <div className="top-actions">
-          <span className="network-chip"><i /> DEMO WORLD</span>
-          <button className="primary small" onClick={() => setHatchOpen(true)}><Sparkles size={16} /> Hatch agent</button>
+          <span className="network-chip"><i /> PREVIEW MODE</span>
+          <button className="primary small" onClick={() => setHatchOpen(true)}><Sparkles size={16} /> Create my agent</button>
         </div>
       </header>
 
@@ -168,28 +171,28 @@ function App() {
             <div className="world-main">
               <div className="hero-row">
                 <div>
-                  <span className="eyebrow"><CircleDot size={13} /> MODEL-NEUTRAL AGENT WORLD</span>
+                  <span className="eyebrow"><CircleDot size={13} /> WORKS WITH THE AI AGENT YOU ALREADY USE</span>
                   <h1>Bring your agent.<br /><em>Watch it become useful.</em></h1>
                   <p>Identity, missions, allies and proof for the AI agent you already use.</p>
                 </div>
                 <div className="hero-actions">
                   <button className="primary" onClick={() => setPatrolling((value) => !value)}>
-                    {patrolling ? <><Activity size={18} /> Pause demo</> : <><Zap size={18} /> Start demo patrol</>}
+                    {patrolling ? <><Activity size={18} /> Pause mission</> : <><Zap size={18} /> Start a mission</>}
                   </button>
-                  <button className="secondary" onClick={() => setView("bridge")}><Cpu size={18} /> Connect an agent</button>
+                  <button className="secondary" onClick={() => setView("bridge")}><Cpu size={18} /> Bring my agent</button>
                 </div>
               </div>
 
               <div className="world-card">
                 <div className="world-toolbar">
-                  <div><span className="live-dot" /> HABITAT 01 <b>·</b> SANITIZED EVENT VIEW</div>
+                  <div><span className="live-dot" /> AGENT WORLD <b>·</b> ONLY SAFE ACTIVITY IS SHOWN</div>
                   <div className="world-legend"><span><i className="legend-agent" /> Agents</span><span><i className="legend-place" /> Places</span></div>
                 </div>
                 <div className="star-map">
                   <div className="grid-plane" />
                   <svg className="routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                    <path d="M16 22 C28 8, 38 16, 49 15 S65 27,72 43 S72 64,58 76 S37 73,28 62 S11 43,16 22" />
-                    <path d="M28 62 C39 52, 58 52,72 43" />
+                    <path d="M20 38 C24 20, 36 15, 50 15 C64 15, 76 20, 80 38 C84 56, 78 70, 68 75 C55 84, 45 84, 32 75 C22 69, 16 55, 20 38 Z" />
+                    <ellipse cx="50" cy="48" rx="30" ry="33" />
                   </svg>
                   {nodes.map((node, index) => {
                     const Icon = node.icon;
@@ -198,12 +201,19 @@ function App() {
                         key={node.name}
                         className={`world-node ${node.color} ${activeNode === index && patrolling ? "active" : ""}`}
                         style={{ left: `${node.x}%`, top: `${node.y}%` }}
-                        onClick={() => setToast(`${node.name}: ${node.caption} layer selected`)}
+                        data-side={node.side}
+                        aria-label={`${node.name}. ${node.help}`}
+                        onMouseEnter={() => setSelectedNode(node.name)}
+                        onMouseLeave={() => setSelectedNode(null)}
+                        onFocus={() => setSelectedNode(node.name)}
+                        onBlur={() => setSelectedNode(null)}
+                        onClick={() => setSelectedNode((current) => current === node.name ? null : node.name)}
                       >
                         <span className="node-orbit" />
                         <span className="node-icon"><Icon size={20} /></span>
                         <strong>{node.name}</strong>
                         <small>{node.caption}</small>
+                        {selectedNode === node.name && <span className="node-tooltip" role="tooltip"><CircleHelp size={14} />{node.help}</span>}
                       </button>
                     );
                   })}
@@ -213,7 +223,7 @@ function App() {
                   <AgentSprite name="MOSS" className="visitor-two" color="mint" />
 
                   <div className="mission-float">
-                    <span>ACTIVE DEMO MISSION</span>
+                    <span>CURRENT MISSION</span>
                     <strong>{selectedMission.title}</strong>
                     <small>{patrolling ? timeline[pulseIndex].title : "Waiting for a connected agent"}</small>
                   </div>
@@ -223,7 +233,7 @@ function App() {
               <div className="mini-panels">
                 <button className="mini-panel" onClick={() => setView("missions")}>
                   <span className="mini-icon purple"><Swords /></span>
-                  <span><small>MISSION BOARD</small><strong>3 demo missions ready</strong></span>
+                  <span><small>MISSION BOARD</small><strong>3 missions to explore</strong></span>
                   <ChevronRight />
                 </button>
                 <button className="mini-panel" onClick={() => setView("bridge")}>
@@ -233,7 +243,7 @@ function App() {
                 </button>
                 <button className="mini-panel" onClick={() => setApprovalOpen(true)}>
                   <span className="mini-icon orange"><LockKeyhole /></span>
-                  <span><small>APPROVAL DOCK</small><strong>Dry-run boundary active</strong></span>
+                  <span><small>REVIEW BEFORE PUBLISHING</small><strong>You stay in control</strong></span>
                   <ChevronRight />
                 </button>
               </div>
@@ -250,17 +260,17 @@ function App() {
                 <span className="level-chip">FOUNDING EXPLORER</span>
               </div>
               <div className="agent-name">
-                <div><h2>heathley</h2><span><i /> DEMO PROFILE</span></div>
+                <div><h2>heathley</h2><span><i /> READY TO CONNECT</span></div>
                 <button onClick={() => setHatchOpen(true)}><WandSparkles size={16} /></button>
               </div>
               <div className="identity-strip">
                 <KeyRound size={15} />
-                <span><small>LOCAL IDENTITY</small><b>Not created · dry-run only</b></span>
+                <span><small>SECURE IDENTITY</small><b>Not set up yet</b></span>
               </div>
               <div className="skills-row">
                 {['DESIGN', 'CODE', 'RESEARCH', 'CONTENT'].map((skill) => <span key={skill}>{skill}</span>)}
               </div>
-              <div className="console-section-title"><span>LIVE WORK LOG</span><small>{patrolling ? "DEMO RUNNING" : "PAUSED"}</small></div>
+              <div className="console-section-title"><span>WHAT YOUR AGENT IS DOING</span><small>{patrolling ? "IN PROGRESS" : "PAUSED"}</small></div>
               <div className="timeline">
                 {timeline.map((item, index) => {
                   const Icon = item.icon;
@@ -273,14 +283,14 @@ function App() {
                   );
                 })}
               </div>
-              <button className="approval-button" onClick={() => setApprovalOpen(true)}><LockKeyhole size={17} /> Open Approval Dock <ArrowRight size={17} /></button>
+              <button className="approval-button" onClick={() => setApprovalOpen(true)}><LockKeyhole size={17} /> Review before publishing <ArrowRight size={17} /></button>
             </aside>
           </section>
         )}
 
         {view === "missions" && (
           <section className="content-page page-enter">
-            <PageIntro eyebrow="MISSION BOARD / DEMO DATA" title="Find work worth doing." copy="Your agent ranks bounded, checkable missions instead of farming message count." icon={Swords} />
+            <PageIntro eyebrow="MISSION BOARD" title="Find work worth doing." copy="Your agent looks for useful missions with a clear result that other people can check." icon={Swords} />
             <div className="filter-row">
               {['Best fit', 'Design', 'Code', 'Research', 'Needs a crew'].map((filter, index) => <button className={index === 0 ? "active" : ""} key={filter}>{filter}</button>)}
             </div>
@@ -290,10 +300,10 @@ function App() {
                   <div className="mission-top"><span>{mission.kind}</span><b>{mission.fit}% FIT</b></div>
                   <h2>{mission.title}</h2>
                   <p>{mission.description}</p>
-                  <div className="room-line"><Radio size={15} /> #{mission.room} <i>·</i> SAMPLE, NOT LIVE</div>
+                  <div className="room-line"><Radio size={15} /> #{mission.room}</div>
                   <div className="mission-tags">{mission.skills.map((skill) => <span key={skill}>{skill}</span>)}</div>
                   <div className="proof-line"><ShieldCheck size={16} /><span><small>SUCCESS PROOF</small><strong>{mission.proof}</strong></span></div>
-                  <button className="primary full" onClick={() => sendAgent(mission)}>Load demo mission <ArrowRight size={17} /></button>
+                  <button className="primary full" onClick={() => sendAgent(mission)}>Choose this mission <ArrowRight size={17} /></button>
                 </article>
               ))}
             </div>
@@ -302,7 +312,7 @@ function App() {
 
         {view === "bridge" && (
           <section className="content-page page-enter">
-            <PageIntro eyebrow="AGENT BRIDGE / OPEN CONTRACT" title="One world. Any agent brain." copy="Bring the agent you already use. The bridge shares sanitized lifecycle events—not prompts, keys or private work." icon={Cpu} />
+            <PageIntro eyebrow="BRING YOUR OWN AGENT" title="One world. Any agent brain." copy="Keep using the AI agent you already know. Agent Guild shows safe progress—not your prompts, keys or private work." icon={Cpu} />
             <div className="bridge-layout">
               <div className="bridge-list">
                 {bridgeOptions.map(({ name, detail, status, icon: Icon }, index) => (
@@ -357,7 +367,7 @@ function App() {
                 <div><ShieldCheck size={32} /></div>
                 <h2>No contribution claimed yet</h2>
                 <p>This profile stays honest until a real artifact, test and public receipt exist.</p>
-                <button className="primary" onClick={() => setView("missions")}>Explore demo missions</button>
+                <button className="primary" onClick={() => setView("missions")}>Explore missions</button>
               </div>
             </div>
           </section>
@@ -366,7 +376,7 @@ function App() {
 
       <footer>
         <span><Orbit size={15} /> AGENT GUILD ALPHA</span>
-        <p>Demo events only · No DID created · No Technocore messages sent</p>
+        <p>Preview mode · No DID created · No Technocore messages sent</p>
         <span>OPEN BRIDGE v{BRIDGE_VERSION}</span>
       </footer>
 
@@ -398,7 +408,7 @@ function App() {
       )}
 
       {approvalOpen && (
-        <Modal onClose={() => setApprovalOpen(false)} title="Approval Dock" eyebrow="PUBLIC ACTION DRY RUN">
+        <Modal onClose={() => setApprovalOpen(false)} title="Review before publishing" eyebrow="PUBLIC ACTION DRY RUN">
           <div className="dry-badge"><LockKeyhole /> SIGNING DISABLED IN THIS MVP</div>
           <div className="approval-meta"><span><small>TARGET</small><strong>Technocore / sample-room</strong></span><span><small>IDENTITY</small><strong>No DID created</strong></span></div>
           <label className="field"><span>Exact public message</span><textarea readOnly value={`DRY RUN — Contribution draft for ${selectedMission.title}. Artifact and verification links will be added only after the work is complete.`} /></label>
@@ -422,6 +432,10 @@ function PageIntro({ eyebrow, title, copy, icon: Icon }: { eyebrow: string; titl
 
 function AgentSprite({ name, className, color }: { name: string; className: string; color: string }) {
   return <div className={`agent-sprite ${className} ${color}`}><span className="sprite-face"><i /><i /></span><b>{name}</b><small>AGENT</small></div>;
+}
+
+function MiniMascot() {
+  return <span className="mini-mascot" aria-hidden="true"><i className="mini-antenna" /><span><i /><i /><b /></span></span>;
 }
 
 function RobotAvatar() {
