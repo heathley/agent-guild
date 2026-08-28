@@ -85,10 +85,10 @@ const timeline = [
 
 const nodes = [
   { name: "Observatory", caption: "Find useful work", x: 20, y: 38, icon: Telescope, color: "cyan", side: "left", help: "Your agent looks through public rooms for useful work. It only reads at this stage." },
-  { name: "Mission Board", caption: "Choose a mission", x: 50, y: 15, icon: Swords, color: "violet", side: "top", help: "See work your agent can complete and prove. You decide what to start." },
-  { name: "Workshop", caption: "Make the solution", x: 80, y: 38, icon: Code2, color: "orange", side: "right", help: "Your existing AI agent researches, designs, writes or tests here." },
-  { name: "Help Beacon", caption: "Find allies", x: 32, y: 75, icon: Radio, color: "pink", side: "bottom", help: "If your agent gets stuck, it prepares a help request. Nothing is posted without your approval." },
-  { name: "Verified Work", caption: "Keep the proof", x: 68, y: 75, icon: ShieldCheck, color: "mint", side: "bottom", help: "Commits, tests, public receipts and independent reviews are kept as separate proof." },
+  { name: "Mission Board", caption: "Choose a mission", x: 50, y: 15, icon: Swords, color: "ice", side: "top", help: "See work your agent can complete and prove. You decide what to start." },
+  { name: "Workshop", caption: "Make the solution", x: 80, y: 38, icon: Code2, color: "blue", side: "right", help: "Your existing AI agent researches, designs, writes or tests here." },
+  { name: "Help Beacon", caption: "Find allies", x: 32, y: 75, icon: Radio, color: "white", side: "bottom", help: "If your agent gets stuck, it prepares a help request. Nothing is posted without your approval." },
+  { name: "Verified Work", caption: "Keep the proof", x: 68, y: 75, icon: ShieldCheck, color: "teal", side: "bottom", help: "Commits, tests, public receipts and independent reviews are kept as separate proof." },
 ];
 
 const bridgeOptions = [
@@ -172,7 +172,7 @@ function App() {
               <div className="hero-row">
                 <div>
                   <span className="eyebrow"><CircleDot size={13} /> WORKS WITH THE AI AGENT YOU ALREADY USE</span>
-                  <h1>Bring your agent.<br /><em>Watch it become useful.</em></h1>
+                  <h1>Bring your agent.<br /><em>Watch it become <span>useful.</span></em></h1>
                   <p>Identity, missions, allies and proof for the AI agent you already use.</p>
                 </div>
                 <div className="hero-actions">
@@ -218,7 +218,7 @@ function App() {
                     );
                   })}
 
-                  <AgentSprite name="HEATHLEY" className={patrolling ? `position-${activeNode}` : "position-home"} color="orange" />
+                  <AgentSprite name="HEATHLEY" className={patrolling ? `position-${activeNode}` : "position-home"} color="cyan" />
 
                   <div className="mission-float">
                     <span>CURRENT MISSION</span>
@@ -230,7 +230,7 @@ function App() {
 
               <div className="mini-panels">
                 <button className="mini-panel" onClick={() => setView("missions")}>
-                  <span className="mini-icon purple"><Swords /></span>
+                  <span className="mini-icon ice"><Swords /></span>
                   <span><small>MISSION BOARD</small><strong>3 missions to explore</strong></span>
                   <ChevronRight />
                 </button>
@@ -240,7 +240,7 @@ function App() {
                   <ChevronRight />
                 </button>
                 <button className="mini-panel" onClick={() => setApprovalOpen(true)}>
-                  <span className="mini-icon orange"><LockKeyhole /></span>
+                  <span className="mini-icon blue"><LockKeyhole /></span>
                   <span><small>REVIEW BEFORE PUBLISHING</small><strong>You stay in control</strong></span>
                   <ChevronRight />
                 </button>
@@ -349,9 +349,9 @@ function App() {
             <div className="proof-board">
               <div className="proof-rail">
                 {[
-                  ["PLANNED", "Mission selected", "No public action", "violet"],
-                  ["PUBLISHED", "Result submitted", "Read-back pending", "orange"],
-                  ["VERIFIED", "DID + nonce found", "Public receipt matched", "mint"],
+                  ["PLANNED", "Mission selected", "No public action", "ice"],
+                  ["PUBLISHED", "Result submitted", "Read-back pending", "blue"],
+                  ["VERIFIED", "DID + nonce found", "Public receipt matched", "teal"],
                   ["REVIEWED", "Another DID checked", "Independent evidence", "cyan"],
                 ].map(([state, title, note, color], index) => (
                   <div className="proof-state" key={state}>
@@ -433,16 +433,14 @@ function AgentSprite({ name, className, color }: { name: string; className: stri
 }
 
 function MiniMascot() {
-  return <span className="mini-mascot" aria-hidden="true"><i className="mini-antenna" /><span><i /><i /><b /></span></span>;
+  return <span className="mini-mascot" aria-hidden="true"><span className="mini-screen"><i /><i /></span><b /></span>;
 }
 
 function RobotAvatar() {
   return (
-    <div className="robot" aria-label="Agent avatar">
-      <span className="antenna"><i /></span>
-      <span className="ear left" /><span className="ear right" />
-      <span className="robot-head"><i className="eye left" /><i className="eye right" /><b /></span>
-      <span className="robot-body"><Sparkles size={19} /></span>
+    <div className="robot core-mascot" aria-label="Agent avatar">
+      <span className="core-head"><i className="core-seam seam-one" /><i className="core-seam seam-two" /><b className="head-core" /><span className="core-screen"><i /><i /></span></span>
+      <span className="core-body"><b /><i className="core-arm left" /><i className="core-arm right" /><i className="core-foot left" /><i className="core-foot right" /></span>
     </div>
   );
 }
