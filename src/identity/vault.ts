@@ -10,6 +10,7 @@ export type EncryptedIdentity = {
   format: typeof IDENTITY_FORMAT;
   version: typeof IDENTITY_VERSION;
   agentName: string;
+  skills?: string[];
   did: string;
   publicKey: string;
   createdAt: string;
@@ -33,8 +34,10 @@ export class IdentityVaultError extends Error {
 export async function createEncryptedIdentity(
   agentName: string,
   passphrase: string,
+  skills: string[] = [],
 ): Promise<EncryptedIdentity> {
   const cleanName = validateAgentName(agentName);
+  const cleanSkills = validateSkills(skills);
   validatePassphrase(passphrase);
 
   ensureWebCrypto();
@@ -62,6 +65,7 @@ export async function createEncryptedIdentity(
       format: IDENTITY_FORMAT,
       version: IDENTITY_VERSION,
       agentName: cleanName,
+      skills: cleanSkills,
       did,
       publicKey: toBase64Url(publicKey),
       createdAt: new Date().toISOString(),
@@ -243,9 +247,21 @@ function validateIdentity(value: unknown): asserts value is EncryptedIdentity {
     throw new IdentityVaultError("The identity backup has invalid protection data.");
   }
   validateAgentName(identity.agentName);
+  if (identity.skills !== undefined) validateSkills(identity.skills);
   if (!Number.isFinite(Date.parse(identity.createdAt))) {
     throw new IdentityVaultError("The identity backup has an invalid creation date.");
   }
+}
+
+function validateSkills(skills: string[]): string[] {
+  if (!Array.isArray(skills)) {
+    throw new IdentityVaultError("Skills must be a list.");
+  }
+  const clean = [...new Set(skills.map((skill) => skill.trim()).filter(Boolean))];
+  if (clean.length > 8 || clean.some((skill) => skill.length > 40)) {
+    throw new IdentityVaultError("Use up to 8 skills, each no longer than 40 characters.");
+  }
+  return clean;
 }
 
 function validateAgentName(name: string): string {

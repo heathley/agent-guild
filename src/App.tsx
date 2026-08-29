@@ -408,12 +408,22 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   const [backup, setBackup] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [error, setError] = useState("");
+  const parsedSkills = skills.split("/").map((skill) => skill.trim()).filter(Boolean);
+
+  function reviewDryRun() {
+    setError("");
+    if (name.trim().length < 2 || name.trim().length > 64) return setError("Agent name must be between 2 and 64 characters.");
+    if (!parsedSkills.length || parsedSkills.length > 8 || parsedSkills.some((skill) => skill.length > 40)) return setError("Add 1–8 skills separated by /, each no longer than 40 characters.");
+    if (passphrase.length < 12 || passphrase.length > 128) return setError("Use a passphrase between 12 and 128 characters.");
+    if (passphrase !== confirm) return setError("Passphrases do not match.");
+    setDryRun(true);
+  }
 
   async function create() {
     setError("");
     if (passphrase !== confirm) return setError("Passphrases do not match.");
     try {
-      const value = await createEncryptedIdentity(name, passphrase);
+      const value = await createEncryptedIdentity(name, passphrase, parsedSkills);
       await saveLocalIdentity(value);
       download(`${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-agent-guild-identity.json`, exportIdentityBackup(value));
       setPassphrase(""); setConfirm("");
@@ -444,13 +454,13 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   return <Modal title="IDENTITY DOCK" onClose={onClose}>
     {mode === "choose" ? <>
       <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID. Neither choice buys or creates an AI model.</p>
-      {identity ? <><div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong><code>{identity.did}</code></div></div><details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details></> : null}
+      {identity ? <><div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong>{identity.skills?.length ? <span>{identity.skills.join(" · ")}</span> : null}<code>{identity.did}</code></div></div><details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details></> : null}
       <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>Prove control through its existing signer</span></button></div>
     </> : null}
     {mode === "create" ? <>
       <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
-      {identity ? <p className="form-error"><CircleAlert size={16} />Delete the existing local vault with the explicit confirmation above before creating another one.</p> : <><div className="form-grid"><label>Agent name<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Skills<input value={skills} onChange={(event) => setSkills(event.target.value)} /></label><label>Passphrase<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} autoComplete="new-password" /></label><label>Repeat passphrase<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" /></label></div>
-      {!dryRun ? <button className="button button-primary full" onClick={() => setDryRun(true)}>REVIEW DRY RUN</button> : <div className="dry-run"><p className="panel-kicker">DRY RUN · NOTHING CREATED YET</p><ul><li>A fresh Ed25519 DID will be generated in this browser.</li><li>The private key will be encrypted with AES-256-GCM and stored only in local IndexedDB.</li><li>Your passphrase and private key will never be sent or printed.</li><li>An encrypted backup downloads immediately. Keep it safe.</li><li>Identity locks after signing; public publishing always needs a separate confirmation.</li></ul><button className="button button-primary full" onClick={() => void create()}>CREATE ENCRYPTED DID</button></div>}</>}
+      {identity ? <p className="form-error"><CircleAlert size={16} />Delete the existing local vault with the explicit confirmation above before creating another one.</p> : <><div className="form-grid"><label>Agent name<input value={name} disabled={dryRun} onChange={(event) => setName(event.target.value)} /></label><label>Skills · separate with /<input value={skills} disabled={dryRun} onChange={(event) => setSkills(event.target.value)} /></label><label>Passphrase<input type="password" value={passphrase} disabled={dryRun} onChange={(event) => setPassphrase(event.target.value)} autoComplete="new-password" /></label><label>Repeat passphrase<input type="password" value={confirm} disabled={dryRun} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" /></label></div>
+      {!dryRun ? <button className="button button-primary full" onClick={reviewDryRun}>REVIEW DRY RUN</button> : <div className="dry-run"><p className="panel-kicker">DRY RUN · NOTHING CREATED YET</p><dl className="dry-run-summary"><div><dt>AGENT</dt><dd>{name.trim()}</dd></div><div><dt>SKILLS</dt><dd>{parsedSkills.join(" · ")}</dd></div></dl><ul><li>A fresh Ed25519 DID will be generated in this browser.</li><li>The private key will be encrypted with AES-256-GCM and stored only in local IndexedDB.</li><li>Your passphrase and private key will never be sent or printed.</li><li>An encrypted backup downloads immediately. Keep it safe.</li><li>Identity locks after signing; public publishing always needs a separate confirmation.</li></ul><div className="dry-run-actions"><button className="button button-secondary" onClick={() => setDryRun(false)}>EDIT DETAILS</button><button className="button button-primary" onClick={() => void create()}>CREATE ENCRYPTED DID</button></div></div>}</>}
       {!identity ? <details className="restore-zone"><summary>RESTORE AN ENCRYPTED BACKUP</summary><label>Encrypted identity JSON<textarea value={backup} onChange={(event) => setBackup(event.target.value)} /></label><button className="button button-secondary" disabled={!backup.trim()} onClick={() => void restore()}>RESTORE LOCAL VAULT</button></details> : null}
     </> : null}
     {mode === "bring" ? <>

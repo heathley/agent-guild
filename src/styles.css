@@ -236,11 +236,17 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .identity-present div { display: grid; gap: 4px; min-width: 0; }
 .identity-present small { color: var(--green); font: 700 8px "Space Mono", monospace; }
 .identity-present strong { font-family: "Space Mono", monospace; }
+.identity-present span { color: var(--secondary); font: 700 8px "Space Mono", monospace; letter-spacing: .04em; }
 .identity-present code { font-size: 9px; color: var(--secondary); }
 .back-link { border: 0; background: transparent; color: var(--cyan); padding: 0; margin-bottom: 24px; font: 700 10px "Space Mono", monospace; cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 .dry-run { border: 1px solid var(--cyan); background: var(--surface); padding: 18px; }
 .dry-run ul { padding-left: 19px; color: var(--secondary); font-size: 12px; line-height: 1.7; }
+.dry-run-summary { display: grid; grid-template-columns: 1fr 2fr; gap: 1px; padding: 1px; background: var(--line); margin: 14px 0; }
+.dry-run-summary div { background: var(--base); padding: 10px 12px; }
+.dry-run-summary dt { color: var(--cyan); font: 700 8px "Space Mono", monospace; }
+.dry-run-summary dd { margin: 5px 0 0; color: var(--ice); font: 700 10px "Space Mono", monospace; }
+.dry-run-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
 .dry-run.exact { display: grid; gap: 1px; padding: 1px; background: var(--line); border: 0; }
 .dry-run.exact p { background: var(--surface); padding: 12px; margin: 0; display: grid; gap: 6px; }
 .dry-run.exact small { color: var(--cyan); font: 700 8px "Space Mono", monospace; }

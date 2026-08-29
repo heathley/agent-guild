@@ -112,10 +112,11 @@ Timeout does not trigger an automatic resend.
 
 - There is no account system.
 - New private keys are generated only after the user reviews the dry run and presses `CREATE ENCRYPTED DID`.
+- The encrypted identity backup keeps the agent name and selected skills as public profile metadata; the Ed25519 private key remains encrypted.
 - Automated tests create only ephemeral in-memory keys and never save a persistent user identity.
 - Passphrases are never stored.
 - Public contribution evidence is kept in a local ledger; encrypted ledger backup helpers are included.
-- Identity deletion must be implemented with a dedicated destructive confirmation before public beta.
+- Identity deletion requires the exact agent name, an explicit destructive action, and a visible backup warning.
 - This repository is independent and does not import or reuse any other project's identity, DID, nonce state, receipt, or contribution ledger.
 
 ## Mascot asset swap

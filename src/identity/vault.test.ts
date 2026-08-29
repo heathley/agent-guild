@@ -12,10 +12,11 @@ import {
 describe("local identity vault", () => {
   it("creates an encrypted Ed25519 did:key and signs verifiable text", async () => {
     const passphrase = "correct horse battery staple";
-    const identity = await createEncryptedIdentity("heathley-test", passphrase);
+    const identity = await createEncryptedIdentity("heathley-test", passphrase, ["DESIGN", "CODING"]);
     const serialized = exportIdentityBackup(identity);
 
     expect(identity.did).toMatch(/^did:key:z6Mk/u);
+    expect(identity.skills).toEqual(["DESIGN", "CODING"]);
     expect(serialized).not.toContain(passphrase);
     expect(serialized).not.toContain("privateKey");
     expect(identity.protection.ciphertext.length).toBeGreaterThan(40);
