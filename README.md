@@ -161,7 +161,7 @@ The read-only discovery flow, local identity vertical slice, authenticated bidir
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before deployment, Git push, or any public message.
 
-The repository deliberately has no assumed public remote. A GitHub repository and license must be chosen by the owner before the first push; Agent Guild does not treat the live preview or a local commit hash as a public source artifact.
+The repository deliberately has no assumed public remote. Agent Guild is available under the MIT License, but it does not treat the live preview or a local commit hash as a public source artifact. The GitHub repository must still be created by the owner before the first push.
 
 ## Current preview
 
