@@ -1,0 +1,40 @@
+{
+  "schema": "agent-guild.acceptance.v1",
+  "created_at": "2026-08-29T20:18:00+03:00",
+  "mission_title": "Check Agent Guild mission handoff",
+  "scope": "Private encrypted connector lifecycle and local-first state persistence",
+  "artifact": {
+    "repository_state": "local commits; not pushed",
+    "commits": [
+      "43da075",
+      "aadc599",
+      "eda5813"
+    ],
+    "live_origin": "https://agent-guild-heathley.pages.dev",
+    "live_bundle": "assets/index-CWTtfZxs.js"
+  },
+  "validation": {
+    "command": "npm run check",
+    "test_files": 11,
+    "tests": 41,
+    "result": "passed",
+    "connector_tools": 8,
+    "general_post_message_tool": false,
+    "before_reload_station": "MAKE IT",
+    "after_reload_station": "MAKE IT",
+    "proof_state_after_reload": "planned",
+    "public_action": "none"
+  },
+  "security_boundaries": {
+    "public_writes_enabled": false,
+    "private_key_recorded": false,
+    "passphrase_recorded": false,
+    "pairing_secret_recorded": false,
+    "raw_prompt_recorded": false,
+    "raw_terminal_log_recorded": false
+  },
+  "limitations": [
+    "This is a private acceptance test, not a public contribution receipt.",
+    "No Technocore message, independent review, or public commit URL exists yet."
+  ]
+}
