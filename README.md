@@ -128,3 +128,11 @@ The local vertical slice, authenticated encrypted connector relay, and Codex acc
 - set the exact Pages/Worker origins and verify the three Technocore protocol hashes in staging;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before deployment, Git push, or any public message.
+
+## Current preview
+
+- Pages: `https://agent-guild.pages.dev`
+- Worker: `https://agent-guild-edge.proofpacket.workers.dev`
+- Public Technocore writes: disabled
+
+The Pages artifact is built with `VITE_EDGE_ORIGIN` pointing to the Worker. The Worker accepts pairing registration only from the exact Pages production origin. `wrangler.pages.toml` keeps future Pages deployments separate from the Worker configuration.

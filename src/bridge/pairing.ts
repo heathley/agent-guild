@@ -1,4 +1,4 @@
-import { sanitizeBridgePayload, type AgentBridgeEvent } from "./contract";
+import { sanitizeBridgePayload, type AgentBridgeEvent } from "./contract.js";
 
 export type EncryptedEventEnvelope = { version: 1; eventId: string; iv: string; ciphertext: string };
 
