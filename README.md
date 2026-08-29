@@ -131,8 +131,11 @@ The local vertical slice, authenticated encrypted connector relay, and Codex acc
 
 ## Current preview
 
-- Pages: `https://agent-guild.pages.dev`
-- Worker: `https://agent-guild-edge.proofpacket.workers.dev`
+- Pages: `https://agent-guild-heathley.pages.dev`
+- Worker: `https://agent-guild-edge.agent-guild.workers.dev`
+
+Both resources run in the separate Heathley Cloudflare account. The earlier
+ProofPacket-account previews are not used by this production build.
 - Public Technocore writes: disabled
 
 The Pages artifact is built with `VITE_EDGE_ORIGIN` pointing to the Worker. The Worker accepts pairing registration only from the exact Pages production origin. `wrangler.pages.toml` keeps future Pages deployments separate from the Worker configuration.
