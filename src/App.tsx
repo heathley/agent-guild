@@ -19,7 +19,7 @@ import { edgeOrigin, edgeUrl } from "./data/edge";
 import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
   createEncryptedIdentity, exportIdentityBackup, parseIdentityBackup, shortDid, signText,
-  unlockIdentity, verifyDidSignature, type EncryptedIdentity,
+  unlockIdentity, verifyDidSignature, verifyText, type EncryptedIdentity,
 } from "./identity/vault";
 import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
 import type { LedgerEntry, Mission, ProofState } from "./protocol/models";
@@ -408,6 +408,11 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   const [backup, setBackup] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [error, setError] = useState("");
+  const [signerTestOpen, setSignerTestOpen] = useState(false);
+  const [signerPassphrase, setSignerPassphrase] = useState("");
+  const [signerTestStatus, setSignerTestStatus] = useState<"" | "verified" | "failed">("");
+  const [testingSigner, setTestingSigner] = useState(false);
+  const [signerChallenge] = useState(() => `agent-guild-local-check:${crypto.randomUUID()}`);
   const parsedSkills = skills.split("/").map((skill) => skill.trim()).filter(Boolean);
 
   function reviewDryRun() {
@@ -437,6 +442,24 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
     onExternal(did.trim());
   }
 
+  async function testLocalSigner() {
+    if (!identity || !signerPassphrase) return;
+    setTestingSigner(true);
+    setSignerTestStatus("");
+    try {
+      const privateKey = await unlockIdentity(identity, signerPassphrase);
+      const signature = await signText(privateKey, signerChallenge);
+      const verified = await verifyText(identity, signerChallenge, signature);
+      if (!verified) throw new Error("The local signature did not match this DID.");
+      setSignerPassphrase("");
+      setSignerTestStatus("verified");
+    } catch {
+      setSignerTestStatus("failed");
+    } finally {
+      setTestingSigner(false);
+    }
+  }
+
   async function restore() {
     try {
       const restored = parseIdentityBackup(backup);
@@ -454,7 +477,20 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   return <Modal title="IDENTITY DOCK" onClose={onClose}>
     {mode === "choose" ? <>
       <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID. Neither choice buys or creates an AI model.</p>
-      {identity ? <><div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong>{identity.skills?.length ? <span>{identity.skills.join(" · ")}</span> : null}<code>{identity.did}</code></div></div><details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details></> : null}
+      {identity ? <>
+        <div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong>{identity.skills?.length ? <span>{identity.skills.join(" · ")}</span> : null}<code>{identity.did}</code></div></div>
+        <button className="button button-secondary full" onClick={() => { setSignerTestOpen((open) => !open); setSignerTestStatus(""); }}>TEST LOCAL SIGNER</button>
+        {signerTestOpen ? <div className="signer-test">
+          <p className="panel-kicker">LOCAL CHECK · NOTHING PUBLISHED</p>
+          <p>Unlock this encrypted vault once to sign a random challenge. The private key, passphrase, and signature stay in this browser.</p>
+          <code>{signerChallenge}</code>
+          <label>Passphrase<input type="password" value={signerPassphrase} onChange={(event) => { setSignerPassphrase(event.target.value); setSignerTestStatus(""); }} autoComplete="current-password" /></label>
+          <button className="button button-primary full" disabled={!signerPassphrase || testingSigner} onClick={() => void testLocalSigner()}>{testingSigner ? "CHECKING…" : "SIGN & VERIFY LOCALLY"}</button>
+          {signerTestStatus === "verified" ? <p className="signer-result verified" role="status"><ShieldCheck size={16} />Signer verified. This DID controls the encrypted local key.</p> : null}
+          {signerTestStatus === "failed" ? <p className="signer-result failed" role="alert"><CircleAlert size={16} />Check the passphrase and encrypted backup. Nothing was published.</p> : null}
+        </div> : null}
+        <details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details>
+      </> : null}
       <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>Prove control through its existing signer</span></button></div>
     </> : null}
     {mode === "create" ? <>

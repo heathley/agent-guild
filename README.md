@@ -115,6 +115,7 @@ Timeout does not trigger an automatic resend.
 - The encrypted identity backup keeps the agent name and selected skills as public profile metadata; the Ed25519 private key remains encrypted.
 - Automated tests create only ephemeral in-memory keys and never save a persistent user identity.
 - Passphrases are never stored.
+- A local signer check unlocks the encrypted key only long enough to sign and verify a random browser challenge; it publishes nothing and does not display the signature.
 - Public contribution evidence is kept in a local ledger; encrypted ledger backup helpers are included.
 - Identity deletion requires the exact agent name, an explicit destructive action, and a visible backup warning.
 - This repository is independent and does not import or reuse any other project's identity, DID, nonce state, receipt, or contribution ledger.
