@@ -299,7 +299,7 @@ function App() {
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onCreated={(value) => { setIdentity(value); setExternalDid(""); setIdentityOpen(false); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
-      {pairOpen ? <ConnectorModal onClose={() => setPairOpen(false)} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} onClose={() => setPairOpen(false)} onEvent={(event) => void handleAgentEvent(event)} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
     </div>
   );
@@ -511,7 +511,7 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   </Modal>;
 }
 
-function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+function ConnectorModal({ did, onClose, onEvent }: { did: string | null; onClose: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [token] = useState(createPairToken);
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
   const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">("preparing");
@@ -522,8 +522,9 @@ function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (e
   const [status, setStatus] = useState("");
 
   useEffect(() => {
+    if (!did) return;
     let cancelled = false;
-    void createRelayPairing(edgeOrigin()).then(async (created) => {
+    void createRelayPairing(edgeOrigin(), did).then(async (created) => {
       if (cancelled) return;
       setPairing(created);
       try {
@@ -534,7 +535,7 @@ function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (e
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [did]);
 
   useEffect(() => {
     if (!pairing || relayState !== "ready") return;
@@ -545,6 +546,11 @@ function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (e
         for (const item of events) {
           const event = await decryptRelayedEvent(pairing, item.envelope);
           if (stopped) return;
+          if (did && event.identity.did !== did) {
+            setStatus("Event rejected: paired agent DID does not match this local identity.");
+            cursor.current = Math.max(cursor.current, item.seq);
+            continue;
+          }
           onEvent(event);
           cursor.current = Math.max(cursor.current, item.seq);
           setStatus(`${event.event} received securely · ${event.eventId.slice(0, 8)}`);
@@ -556,23 +562,29 @@ function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (e
     void poll();
     const interval = window.setInterval(() => void poll(), 2500);
     return () => { stopped = true; window.clearInterval(interval); };
-  }, [onEvent, pairing, relayState]);
+  }, [did, onEvent, pairing, relayState]);
 
   async function importEvent() {
     try {
       const parsed = JSON.parse(envelope) as { envelope?: EncryptedEventEnvelope } & Partial<EncryptedEventEnvelope>;
       const encrypted = parsed.envelope || parsed as EncryptedEventEnvelope;
       const event = pairing ? await decryptRelayedEvent(pairing, encrypted) : await decryptConnectorEvent(token, encrypted);
+      if (did && event.identity.did !== did) throw new Error("Paired agent DID does not match this local identity.");
       onEvent(event);
       setStatus(`${event.event} accepted · ${event.eventId.slice(0, 8)}`);
       setEnvelope("");
     } catch { setStatus("Event rejected: wrong session, damaged ciphertext, or unsupported fields."); }
   }
 
+  if (!did) return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
+    <div className="empty-state"><KeyRound /><div><strong>Set up identity first</strong><p>Create a local DID or prove control of an existing signer before generating a pairing session.</p></div></div>
+  </Modal>;
+
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
     <p className="modal-lead">Use the same local connector with Codex, Claude, Cursor, or any MCP client. It sends only allowlisted lifecycle events—not prompts, keys, environment values, or raw terminal output.</p>
     <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
     <p className="panel-kicker">ONE-TIME ENCRYPTED PAIRING FILE</p>
+    <p className="fine-print">BOUND AGENT DID · <code>{shortDid(did)}</code></p>
     <p className="fine-print">The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events. Keep the file local and delete it after pairing.</p>
     <button className="button button-primary full" disabled={!pairing} onClick={() => pairing && download("agent-guild-pairing.json", exportRelayPairing(pairing))}>DOWNLOAD PAIRING FILE</button>
     <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>

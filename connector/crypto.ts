@@ -10,6 +10,7 @@ export type EncryptedConnectorEvent = {
 export type ConnectorPairingFile = {
   version: 2;
   sessionId: string;
+  agentDid?: string;
   relayUrl: string;
   encryptionKey: string;
   signingPrivateKey: JsonWebKey;
@@ -83,6 +84,7 @@ export async function relayConnectorEvent(pairing: ConnectorPairingFile, eventId
 function validateConnectorPairing(pairing: ConnectorPairingFile): void {
   if (pairing.version !== 2 || !/^[A-Za-z0-9_-]{32}$/.test(pairing.sessionId)) throw new Error("Pairing file is malformed.");
   if (!/^[A-Za-z0-9_-]{43}$/.test(pairing.encryptionKey)) throw new Error("Pairing file encryption key is malformed.");
+  if (pairing.agentDid !== undefined && !/^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/.test(pairing.agentDid)) throw new Error("Pairing file agent DID is malformed.");
   if (pairing.signingPrivateKey?.kty !== "EC" || pairing.signingPublicKey?.kty !== "EC") throw new Error("Pairing file signing keys are malformed.");
   if (Date.parse(pairing.expiresAt) <= Date.now()) throw new Error("Pairing file expired. Generate a fresh file in Agent Guild.");
   const url = new URL(pairing.relayUrl);

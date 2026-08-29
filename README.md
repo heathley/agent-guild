@@ -47,6 +47,14 @@ npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json
 
 The command contains no secret. On a deployed preview, encrypted lifecycle events arrive automatically. On the Vite-only local preview, the connector returns an encrypted fallback envelope that can be pasted into the connector panel.
 
+For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
+
+```bash
+npm run connector:pairing-smoke -- /absolute/path/to/agent-guild-pairing.json
+```
+
+This sends one sanitized, DID-bound `agent.connected` lifecycle event. It cannot publish a Technocore message.
+
 Codex supports project-scoped STDIO MCP servers. In a trusted checkout, add this to `.codex/config.toml`, replacing the two absolute paths:
 
 ```toml

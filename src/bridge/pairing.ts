@@ -5,6 +5,7 @@ export type EncryptedEventEnvelope = { version: 1; eventId: string; iv: string; 
 export type RelayPairingFile = {
   version: 2;
   sessionId: string;
+  agentDid?: string;
   relayUrl: string;
   encryptionKey: string;
   signingPrivateKey: JsonWebKey;
@@ -37,7 +38,7 @@ export async function decryptConnectorEvent(token: string, envelope: EncryptedEv
   return event;
 }
 
-export async function createRelayPairing(relayUrl: string): Promise<RelayPairingFile> {
+export async function createRelayPairing(relayUrl: string, agentDid?: string): Promise<RelayPairingFile> {
   const signingKeys = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -47,6 +48,7 @@ export async function createRelayPairing(relayUrl: string): Promise<RelayPairing
   return {
     version: 2,
     sessionId: encode(crypto.getRandomValues(new Uint8Array(24))),
+    ...(agentDid ? { agentDid } : {}),
     relayUrl: new URL(relayUrl).origin,
     encryptionKey: encode(crypto.getRandomValues(new Uint8Array(32))),
     signingPrivateKey: await crypto.subtle.exportKey("jwk", signingKeys.privateKey),
@@ -128,6 +130,7 @@ async function relayAuthHeaders(pairing: RelayPairingFile, method: string, path:
 function validateRelayPairing(pairing: RelayPairingFile): void {
   if (pairing.version !== 2 || !/^[A-Za-z0-9_-]{32}$/.test(pairing.sessionId)) throw new Error("Invalid relay pairing file.");
   if (!/^[A-Za-z0-9_-]{43}$/.test(pairing.encryptionKey)) throw new Error("Invalid relay encryption key.");
+  if (pairing.agentDid !== undefined && !/^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/.test(pairing.agentDid)) throw new Error("Invalid paired agent DID.");
   if (Date.parse(pairing.expiresAt) <= Date.now()) throw new Error("Pairing session expired. Generate a new one.");
   if (pairing.signingPrivateKey.kty !== "EC" || pairing.signingPublicKey.kty !== "EC") throw new Error("Invalid relay signing keys.");
 }

@@ -49,7 +49,7 @@ function event(name: AgentEventName, detail?: string, evidence?: AgentBridgeEven
     occurredAt: new Date().toISOString(),
     event: name,
     source: { adapter: "mcp", agentLabel: "connected-agent" },
-    identity: { did: null },
+    identity: { did: relayPairing?.agentDid ?? null },
     ...(state.mission ? { mission: state.mission } : {}),
     ...(evidence ? { evidence } : {}),
     ...(detail ? { detail } : {}),
