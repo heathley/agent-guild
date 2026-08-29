@@ -37,6 +37,16 @@ export type Mission = {
   resultHash?: string;
 };
 
+export type AttachedEvidence = {
+  eventId: string;
+  missionId: string;
+  kind: "commit" | "test" | "receipt" | "review";
+  agentDid: string;
+  attachedAt: string;
+  publicUrl?: string;
+  digest?: string;
+};
+
 export type LedgerEntry = {
   id: string;
   mission: Mission;
@@ -44,6 +54,7 @@ export type LedgerEntry = {
   artifactUrl?: string;
   commitUrl?: string;
   testSummary?: string;
+  evidence?: AttachedEvidence[];
   receipt?: Receipt;
   review?: {
     reviewerDid: string;
@@ -63,4 +74,3 @@ export const PROOF_ORDER: readonly ProofState[] = [
   "review-requested",
   "reviewed",
 ] as const;
-

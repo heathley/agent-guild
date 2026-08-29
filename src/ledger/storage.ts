@@ -61,7 +61,13 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<LedgerEntry>;
   return typeof item.id === "string" && typeof item.state === "string" && typeof item.createdAt === "string" &&
-    !!item.mission && typeof item.mission.id === "string" && typeof item.mission.title === "string";
+    !!item.mission && typeof item.mission.id === "string" && typeof item.mission.title === "string" &&
+    (item.evidence === undefined || (Array.isArray(item.evidence) && item.evidence.every((evidence) =>
+      evidence && typeof evidence.eventId === "string" && typeof evidence.missionId === "string" &&
+      ["commit", "test", "receipt", "review"].includes(evidence.kind) && typeof evidence.agentDid === "string" &&
+      typeof evidence.attachedAt === "string" && (evidence.publicUrl === undefined || typeof evidence.publicUrl === "string") &&
+      (evidence.digest === undefined || typeof evidence.digest === "string")
+    )));
 }
 
 async function derive(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {

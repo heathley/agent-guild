@@ -22,6 +22,7 @@ import {
   unlockIdentity, verifyDidSignature, verifyText, type EncryptedIdentity,
 } from "./identity/vault";
 import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
+import { attachEvidenceFromEvent } from "./ledger/evidence";
 import type { LedgerEntry, Mission, ProofState } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
@@ -116,9 +117,10 @@ function App() {
             setHandoffStatus("Agent event rejected: its DID does not match this identity.");
             continue;
           }
-          await handleAgentEvent(event);
-          if (event.event === "mission.selected") setHandoffStatus("Your agent received the mission and confirmed its finish line.");
-          if (["mission.researching", "mission.building", "mission.testing"].includes(event.event)) setHandoffStatus(`Agent update: ${event.event.split(".")[1]}. This is activity—not proof yet.`);
+          const eventStatus = await handleAgentEvent(event);
+          if (eventStatus) setHandoffStatus(eventStatus);
+          else if (event.event === "mission.selected") setHandoffStatus("Your agent received the mission and confirmed its finish line.");
+          else if (["mission.researching", "mission.building", "mission.testing"].includes(event.event)) setHandoffStatus(`Agent update: ${event.event.split(".")[1]}. This is activity—not proof yet.`);
         }
       } catch (error) {
         if (!stopped) setHandoffStatus(error instanceof Error ? error.message : "The encrypted agent relay could not be read.");
@@ -201,18 +203,34 @@ function App() {
     setMascotMood(moodForState(state));
   }
 
-  async function handleAgentEvent(event: AgentBridgeEvent) {
+  async function handleAgentEvent(event: AgentBridgeEvent): Promise<string | null> {
+    let nextLedger = ledger;
+    let eventMission = activeMission;
     if (event.mission && activeMission?.id !== event.mission.id) {
-      await chooseMission({
+      eventMission = {
         id: event.mission.id, source: "local", title: event.mission.title,
         summary: event.detail || "Mission proposed by the connected agent.",
         successCriteria: ["Confirm a concrete finish line before public action"],
         verification: "Attach an artifact and test result, then verify any public receipt by read-back.",
         risk: "medium", observedAt: event.occurredAt,
-      });
+      };
+      const previous = nextLedger.find((entry) => entry.mission.id === event.mission?.id);
+      if (previous) eventMission = previous.mission;
+      else {
+        const now = new Date().toISOString();
+        nextLedger = [...nextLedger, { id: crypto.randomUUID(), mission: eventMission, state: "planned", createdAt: now, updatedAt: now }];
+      }
+      setActiveMission(eventMission);
     }
+    if (event.evidence) {
+      const result = attachEvidenceFromEvent(nextLedger, event, connectedDid);
+      if (!result.accepted) return `Evidence rejected: ${result.reason?.replaceAll("-", " ")}. Proof state was not changed.`;
+      nextLedger = result.entries;
+    }
+    if (nextLedger !== ledger) { setLedger(nextLedger); await saveLedger(nextLedger); }
     setStation(stationForEvent(event.event));
     setMascotMood(moodForEvent(event.event));
+    return event.evidence ? `${event.evidence.kind.toUpperCase()} evidence attached locally. Activity is not proof; state remains ${proofState.toUpperCase()}.` : null;
   }
 
   async function startInAgent() {
@@ -366,6 +384,10 @@ function App() {
                 <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
               {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
+              {currentEntry?.evidence?.length ? <div className="local-evidence" aria-label="Attached local evidence">
+                <p className="panel-kicker">ATTACHED LOCALLY · NOT VERIFIED</p>
+                {currentEntry.evidence.map((item) => <div key={item.eventId}><span>{item.kind.toUpperCase()}</span><code>{item.digest || item.publicUrl}</code></div>)}
+              </div> : null}
             </div>
           ) : null}
         </section>

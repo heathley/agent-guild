@@ -170,6 +170,11 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .mission-pack-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .mission-pack h3 { font-size: clamp(22px, 3vw, 32px); margin-bottom: 0; }
 .mission-pack > p { color: var(--secondary); max-width: 900px; line-height: 1.7; }
+.local-evidence { margin-top: 14px; border: 1px solid var(--line); background: var(--base); padding: 14px; }
+.local-evidence .panel-kicker { margin-bottom: 10px; }
+.local-evidence > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.local-evidence span { color: var(--cyan); font: 700 9px "Space Mono", monospace; }
+.local-evidence code { color: var(--secondary); font-size: 10px; overflow-wrap: anywhere; }
 .risk { display: inline-flex; align-items: center; min-width: max-content; padding: 5px 7px; border: 1px solid var(--line); font: 700 8px "Space Mono", monospace; color: var(--secondary); }
 .risk-low { border-color: var(--green); color: var(--green); }
 .risk-high { border-color: var(--red); color: var(--red); }

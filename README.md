@@ -145,9 +145,9 @@ The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temp
 
 ## Status and remaining beta work
 
-The read-only discovery flow, local identity vertical slice, authenticated bidirectional connector relay, and Codex acceptance test are implemented. Before a public beta:
+The read-only discovery flow, local identity vertical slice, authenticated bidirectional connector relay, DID-bound local evidence persistence, and Codex acceptance test are implemented. Before a public beta:
 
-- persist connector evidence events into the local ledger and complete the external-signer publishing path;
+- complete the external-signer publishing path;
 - package the connector for a user-friendly install instead of requiring a repository checkout;
 - create a separate writes-disabled staging deployment and verify the three Technocore protocol hashes there;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
