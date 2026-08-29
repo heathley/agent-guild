@@ -57,10 +57,15 @@ async function refreshAssignment(): Promise<boolean> {
   let changed = false;
   for (const command of commands) {
     state.commandCursor = Math.max(state.commandCursor, command.seq);
-    const assignment = await decryptRelayedMission(relayPairing, command);
-    state.assignment = assignment;
-    state.mission = { id: assignment.mission.id, title: assignment.mission.title };
-    changed = true;
+    try {
+      const assignment = await decryptRelayedMission(relayPairing, command);
+      state.assignment = assignment;
+      state.mission = { id: assignment.mission.id, title: assignment.mission.title };
+      changed = true;
+    } catch {
+      // Expired or invalid commands cannot block a newer valid assignment.
+      // The cursor still advances, so a poison command is skipped once.
+    }
   }
   return changed;
 }
