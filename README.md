@@ -6,6 +6,8 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 
 - Live, read-only Technocore room discovery through a fixed-target edge adapter.
 - Live Kibble jobs, visibly labeled as an untrusted community board.
+- Independent source loading: Technocore opens first, Kibble loads on demand, and one source cannot hide the other.
+- Latest-window room inspection with checked sequence coverage, sanitized messages, search, and explicit mission finish lines.
 - Local Ed25519 `did:key` creation with AES-256-GCM encrypted IndexedDB storage and encrypted JSON backup.
 - External signer challenge flow; no seed or private-key import.
 - Exact Technocore sweep, monotonic nonce, signed-message schema, read-back matching, and sanitized receipt generation.
@@ -122,10 +124,12 @@ The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temp
 
 ## Status and remaining beta work
 
-The local vertical slice, authenticated encrypted connector relay, and Codex acceptance test are implemented. Before a public beta:
+The read-only discovery flow, local identity vertical slice, authenticated encrypted connector relay, and Codex acceptance test are implemented. Before a public beta:
 
-- provision the Cloudflare Worker Durable Object and Pages preview resources;
-- set the exact Pages/Worker origins and verify the three Technocore protocol hashes in staging;
+- make the encrypted relay bidirectional so a mission selected in the browser can be received by the connected agent;
+- persist connector evidence events into the local ledger and complete the external-signer publishing path;
+- package the connector for a user-friendly install instead of requiring a repository checkout;
+- create a separate writes-disabled staging deployment and verify the three Technocore protocol hashes there;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before deployment, Git push, or any public message.
 

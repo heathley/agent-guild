@@ -9,46 +9,90 @@ export type PublicRoom = {
   activeAt: string | null;
 };
 
+export type PublicRoomMessage = {
+  seq: number;
+  timestamp: string | null;
+  from: string;
+  text: string;
+  nonce: string | null;
+};
+
+export type RoomWindow = {
+  room: string;
+  count: number;
+  firstSeq: number | null;
+  lastSeq: number | null;
+  checkedAt: string;
+  messages: PublicRoomMessage[];
+};
+
 export type SourceSnapshot = {
   rooms: PublicRoom[];
   communityJobs: Mission[];
   fetchedAt: string;
 };
 
-export async function fetchSources(signal?: AbortSignal): Promise<SourceSnapshot> {
-  const [roomsResponse, boardResponse] = await Promise.allSettled([
-    fetch(edgeUrl("/api/technocore/rooms?limit=40"), { signal, headers: { accept: "application/json" } }),
-    fetch(edgeUrl("/api/kibble/board"), { signal, headers: { accept: "application/json" } }),
-  ]);
+const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
-  const rooms = roomsResponse.status === "fulfilled" && roomsResponse.value.ok
-    ? normalizeRooms(await roomsResponse.value.json())
-    : [];
-  const communityJobs = boardResponse.status === "fulfilled" && boardResponse.value.ok
-    ? normalizeKibbleBoard(await boardResponse.value.json()).slice(0, 60)
-    : [];
-
-  if (roomsResponse.status === "rejected" && boardResponse.status === "rejected") {
-    throw new Error("Public sources could not be reached. Your local workspace is still available.");
+export async function fetchTechnocoreRooms(signal?: AbortSignal): Promise<PublicRoom[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const payload = await requestJson("/api/technocore/rooms?limit=40", signal);
+      const rooms = normalizeRooms(payload);
+      if (rooms.length || attempt === 1) return rooms;
+      lastError = new Error("Technocore returned an empty room snapshot.");
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      lastError = error;
+      if (attempt === 1) throw error;
+    }
+    await pause(350, signal);
   }
+  throw lastError instanceof Error ? lastError : new Error("Technocore rooms could not be read.");
+}
+
+export async function fetchKibbleJobs(signal?: AbortSignal): Promise<Mission[]> {
+  const payload = await requestJson("/api/kibble/board", signal);
+  return normalizeKibbleBoard(payload).slice(0, 60);
+}
+
+export async function fetchTechnocoreRoom(room: string, signal?: AbortSignal): Promise<RoomWindow> {
+  if (!ROOM_PATTERN.test(room)) throw new Error("This room name cannot be inspected safely.");
+  const payload = await requestJson(`/api/technocore/room/${encodeURIComponent(room)}?limit=50`, signal);
+  return normalizeRoomWindow(payload, room);
+}
+
+// Compatibility helper for callers that explicitly need both sources. The UI
+// loads them independently so one unavailable source cannot hide the other.
+export async function fetchSources(signal?: AbortSignal): Promise<SourceSnapshot> {
+  const [rooms, communityJobs] = await Promise.all([
+    fetchTechnocoreRooms(signal),
+    fetchKibbleJobs(signal),
+  ]);
   return { rooms, communityJobs, fetchedAt: new Date().toISOString() };
 }
 
-export function roomToMission(room: PublicRoom): Mission {
+export function roomToMission(room: PublicRoom, finishLine?: string, sourceWindow?: RoomWindow): Mission {
+  const hasRange = sourceWindow?.firstSeq !== null && sourceWindow?.firstSeq !== undefined && sourceWindow.lastSeq !== null;
+  const scoped = hasRange
+    ? `Latest visible window checked: sequences ${sourceWindow.firstSeq}–${sourceWindow.lastSeq}. This does not prove older room history.`
+    : "Only the latest public room window was inspected; older history may be outside coverage.";
   return {
-    id: `technocore:${room.room}`,
+    id: `technocore:${room.room}:${sourceWindow?.lastSeq ?? room.messages}`,
     source: "technocore-signal",
-    title: `Explore #${room.room}`,
-    summary: room.topic || "Inspect the newest public messages and identify one concrete, author-confirmed need.",
+    title: `Investigate #${room.room}`,
+    summary: `${room.topic || "No public topic was supplied."} ${scoped}`,
     room: room.room,
-    successCriteria: ["Confirm a specific need with public evidence", "Define a verifiable artifact before claiming work"],
+    successCriteria: [finishLine || "Confirm one concrete need with its author and produce a stranger-checkable artifact"],
     verification: "A signed public result must be read back from the same room before it becomes verified.",
     risk: "medium",
-    observedAt: room.activeAt || new Date(0).toISOString(),
+    observedAt: sourceWindow?.checkedAt || room.activeAt || new Date(0).toISOString(),
+    ...(sourceWindow?.lastSeq !== null && sourceWindow?.lastSeq !== undefined ? { sourceSeq: sourceWindow.lastSeq } : {}),
   };
 }
 
-function normalizeRooms(input: unknown): PublicRoom[] {
+export function normalizeRooms(input: unknown): PublicRoom[] {
   if (!input || typeof input !== "object") return [];
   const list = (input as { rooms?: unknown }).rooms;
   if (!Array.isArray(list)) return [];
@@ -56,12 +100,73 @@ function normalizeRooms(input: unknown): PublicRoom[] {
     if (!row || typeof row !== "object") return [];
     const value = row as Record<string, unknown>;
     const room = clean(value.room, 48);
-    if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(room)) return [];
+    if (!ROOM_PATTERN.test(room)) return [];
     const topic = clean(value.topic, 280);
     const count = [value.last_seq, value.messages, value.count, value.message_count].find((item) => typeof item === "number");
     const rawDate = [value.last_write, value.updated_at, value.last_active, value.ts].find((item) => typeof item === "string");
-    return [{ room, topic, messages: typeof count === "number" ? count : 0, activeAt: typeof rawDate === "string" && Number.isFinite(Date.parse(rawDate)) ? new Date(rawDate).toISOString() : null }];
+    return [{ room, topic, messages: typeof count === "number" ? count : 0, activeAt: safeDate(rawDate) }];
   });
+}
+
+export function normalizeRoomWindow(input: unknown, expectedRoom: string): RoomWindow {
+  if (!input || typeof input !== "object") throw new Error("Technocore returned an unreadable room window.");
+  const value = input as Record<string, unknown>;
+  const room = clean(value.room, 48);
+  if (room !== expectedRoom || !ROOM_PATTERN.test(room)) throw new Error("Technocore returned a different room than requested.");
+  const rows = Array.isArray(value.messages) ? value.messages : [];
+  const messages = rows.flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const message = row as Record<string, unknown>;
+    const seq = typeof message.seq === "number" && Number.isSafeInteger(message.seq) ? message.seq : null;
+    const text = clean(message.text, 2_000);
+    if (seq === null || !text) return [];
+    return [{
+      seq,
+      timestamp: safeDate(message.ts),
+      from: clean(message.from, 180) || "unknown",
+      text,
+      nonce: typeof message.nonce === "string" || typeof message.nonce === "number" ? clean(String(message.nonce), 32) : null,
+    } satisfies PublicRoomMessage];
+  });
+  const firstSeq = safeSeq(value.first_seq) ?? messages.at(0)?.seq ?? null;
+  const lastSeq = safeSeq(value.last_seq) ?? messages.at(-1)?.seq ?? null;
+  return {
+    room,
+    count: typeof value.count === "number" && Number.isSafeInteger(value.count) ? value.count : messages.length,
+    firstSeq,
+    lastSeq,
+    checkedAt: new Date().toISOString(),
+    messages,
+  };
+}
+
+async function requestJson(path: string, signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch(edgeUrl(path), { signal, headers: { accept: "application/json" } });
+  if (!response.ok) {
+    let detail = "";
+    try { detail = clean((await response.json() as { error?: unknown }).error, 240); } catch { /* upstream may not return JSON */ }
+    throw new Error(detail || `Public source returned HTTP ${response.status}.`);
+  }
+  return response.json();
+}
+
+function pause(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException("The request was cancelled.", "AbortError"));
+    const timer = setTimeout(resolve, milliseconds);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new DOMException("The request was cancelled.", "AbortError"));
+    }, { once: true });
+  });
+}
+
+function safeSeq(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
+function safeDate(value: unknown): string | null {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 }
 
 function clean(value: unknown, max: number): string {

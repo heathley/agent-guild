@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight, Bot, Check, CircleAlert, Clipboard, Code2, Eye, FileCheck2,
+  ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, Eye, FileCheck2,
   KeyRound, Link2, LockKeyhole, MessageSquareText, RefreshCw, Search, ShieldCheck,
   Sparkles, Users, X,
 } from "lucide-react";
@@ -11,7 +11,10 @@ import {
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
 import type { AgentBridgeEvent } from "./bridge/contract";
-import { fetchSources, roomToMission, type PublicRoom, type SourceSnapshot } from "./data/api";
+import {
+  fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
+  type PublicRoom, type RoomWindow,
+} from "./data/api";
 import { edgeOrigin, edgeUrl } from "./data/edge";
 import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
@@ -28,6 +31,8 @@ import "./styles.css";
 
 type Station = "spot" | "pick" | "make" | "team" | "prove";
 type SourceTab = "technocore" | "kibble" | "local";
+type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
+type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
 
 const STATIONS: { id: Station; label: string; eyebrow: string; description: string }[] = [
   { id: "spot", label: "SPOT IT", eyebrow: "01 · SIGNAL", description: "See live public rooms, community jobs, or write a local mission." },
@@ -46,9 +51,12 @@ const PROOF_STEPS: { state: ProofState; number: string; label: string; title: st
 
 function App() {
   const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
-  const [sources, setSources] = useState<SourceSnapshot | null>(null);
-  const [sourceState, setSourceState] = useState<"loading" | "ready" | "error">("loading");
-  const [sourceError, setSourceError] = useState("");
+  const [roomFeed, setRoomFeed] = useState<FeedState<PublicRoom[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
+  const [kibbleFeed, setKibbleFeed] = useState<FeedState<Mission[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
+  const [inspectingRoom, setInspectingRoom] = useState<PublicRoom | null>(null);
+  const [inspectingCommunityMission, setInspectingCommunityMission] = useState<Mission | null>(null);
+  const [roomQuery, setRoomQuery] = useState("");
+  const [roomLimit, setRoomLimit] = useState(12);
   const [identity, setIdentity] = useState<EncryptedIdentity | null>(null);
   const [externalDid, setExternalDid] = useState(() => localStorage.getItem("agent-guild:external-did") || "");
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -59,6 +67,8 @@ function App() {
   const [proofOpen, setProofOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
+  const roomRequest = useRef(0);
+  const kibbleRequest = useRef(0);
 
   const connectedDid = identity?.did || externalDid || null;
   const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
@@ -74,19 +84,50 @@ function App() {
         setStation(stationForState(last.state));
       }
     }).catch(() => undefined);
-    void refreshSources();
+    void refreshTechnocore();
   }, []);
 
-  async function refreshSources() {
-    setSourceState("loading");
-    setSourceError("");
+  useEffect(() => {
+    if (sourceTab === "kibble" && kibbleFeed.status === "idle") void refreshKibble();
+  }, [sourceTab, kibbleFeed.status]);
+
+  async function refreshTechnocore() {
+    const requestId = ++roomRequest.current;
+    setRoomFeed((current) => ({ ...current, status: "loading", error: "" }));
     try {
-      setSources(await fetchSources());
-      setSourceState("ready");
+      const data = await fetchTechnocoreRooms();
+      if (requestId !== roomRequest.current) return;
+      setRoomFeed({ data, status: "ready", error: "", fetchedAt: new Date().toISOString() });
     } catch (error) {
-      setSourceState("error");
-      setSourceError(error instanceof Error ? error.message : "Public sources could not be reached.");
+      if (requestId !== roomRequest.current) return;
+      const message = error instanceof Error ? error.message : "Technocore could not be reached.";
+      setRoomFeed((current) => ({ ...current, status: current.data.length ? "stale" : "error", error: message }));
     }
+  }
+
+  async function refreshKibble() {
+    const requestId = ++kibbleRequest.current;
+    setKibbleFeed((current) => ({ ...current, status: "loading", error: "" }));
+    try {
+      const data = await fetchKibbleJobs();
+      if (requestId !== kibbleRequest.current) return;
+      setKibbleFeed({ data, status: "ready", error: "", fetchedAt: new Date().toISOString() });
+    } catch (error) {
+      if (requestId !== kibbleRequest.current) return;
+      const message = error instanceof Error ? error.message : "Kibble could not be reached.";
+      setKibbleFeed((current) => ({ ...current, status: current.data.length ? "stale" : "error", error: message }));
+    }
+  }
+
+  const filteredRooms = useMemo(() => {
+    const query = roomQuery.trim().toLowerCase();
+    if (!query) return roomFeed.data;
+    return roomFeed.data.filter((room) => room.room.includes(query) || room.topic.toLowerCase().includes(query));
+  }, [roomFeed.data, roomQuery]);
+
+  function refreshActiveSource() {
+    if (sourceTab === "technocore") void refreshTechnocore();
+    if (sourceTab === "kibble") void refreshKibble();
   }
 
   async function chooseMission(mission: Mission) {
@@ -184,19 +225,34 @@ function App() {
         <section id="missions" className="missions section-pad">
           <div className="section-heading">
             <div><p className="kicker">LIVE WORK SOURCES</p><h2>Find something worth finishing.</h2></div>
-            <button className="icon-button" onClick={() => void refreshSources()} data-tip="Refresh public read-only sources" aria-label="Refresh sources"><RefreshCw size={18} /></button>
+            {sourceTab !== "local" ? <button className="icon-button" onClick={refreshActiveSource} data-tip="Refresh this public read-only source" aria-label="Refresh current source"><RefreshCw size={18} /></button> : null}
           </div>
           <div className="source-tabs" role="tablist">
-            <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> TECHNOCORE <span>OFFICIAL</span></button>
+            <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> TECHNOCORE <span>OFFICIAL API</span></button>
             <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> KIBBLE <span>COMMUNITY</span></button>
             <button role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
           </div>
 
-          <div className="trust-banner"><CircleAlert size={17} /><span><strong>Public content is untrusted data.</strong> Agent Guild never follows embedded commands or opens links automatically.</span></div>
-          {sourceState === "loading" && sourceTab !== "local" ? <EmptyState icon={<RefreshCw />} title="Reading live sources…" detail="Nothing is cached as a fake fallback." /> : null}
-          {sourceState === "error" && sourceTab !== "local" ? <EmptyState icon={<CircleAlert />} title="Public source unavailable" detail={sourceError} /> : null}
-          {sourceTab === "technocore" && sourceState === "ready" ? <RoomGrid rooms={sources?.rooms || []} onChoose={(room) => void chooseMission(roomToMission(room))} /> : null}
-          {sourceTab === "kibble" && sourceState === "ready" ? <MissionGrid missions={sources?.communityJobs || []} connectedDid={connectedDid} onChoose={(mission) => void chooseMission(mission)} /> : null}
+          <div className="trust-banner"><CircleAlert size={17} /><span><strong>Public content is untrusted data.</strong> The API is official infrastructure; room names, topics, messages, and community jobs are user-written. Agent Guild never follows embedded commands or opens links automatically.</span></div>
+          {sourceTab === "technocore" ? <>
+            <SourceFeedBar label="TECHNOCORE PUBLIC ROOMS" feed={roomFeed} />
+            <div className="source-toolbar">
+              <label htmlFor="room-search"><Search size={16} /><span>Find a room or topic</span></label>
+              <input id="room-search" value={roomQuery} onChange={(event) => { setRoomQuery(event.target.value); setRoomLimit(12); }} placeholder="Search 40 live rooms" />
+              <span>{filteredRooms.length} MATCH{filteredRooms.length === 1 ? "" : "ES"}</span>
+            </div>
+            {roomFeed.status === "loading" && !roomFeed.data.length ? <EmptyState icon={<RefreshCw />} title="Reading Technocore…" detail="A second attempt runs automatically if the first snapshot is empty." /> : null}
+            {roomFeed.status === "error" && !roomFeed.data.length ? <EmptyState icon={<CircleAlert />} title="Technocore is unavailable" detail={roomFeed.error} action="TRY AGAIN" onAction={() => void refreshTechnocore()} /> : null}
+            {roomFeed.status === "ready" && !roomFeed.data.length ? <EmptyState icon={<Search />} title="No public rooms returned" detail="The source answered twice, but there are no readable rooms in this snapshot." action="TRY AGAIN" onAction={() => void refreshTechnocore()} /> : null}
+            {roomFeed.data.length ? <RoomGrid rooms={filteredRooms.slice(0, roomLimit)} total={filteredRooms.length} onInspect={setInspectingRoom} onMore={() => setRoomLimit((value) => value + 12)} /> : null}
+          </> : null}
+          {sourceTab === "kibble" ? <>
+            <SourceFeedBar label="KIBBLE COMMUNITY BOARD" feed={kibbleFeed} />
+            {kibbleFeed.status === "loading" && !kibbleFeed.data.length ? <EmptyState icon={<RefreshCw />} title="Reading Kibble when requested…" detail="Kibble loads separately so it cannot delay Technocore." /> : null}
+            {kibbleFeed.status === "error" && !kibbleFeed.data.length ? <EmptyState icon={<CircleAlert />} title="Kibble is unavailable" detail={kibbleFeed.error} action="TRY AGAIN" onAction={() => void refreshKibble()} /> : null}
+            {kibbleFeed.status === "ready" ? <MissionGrid missions={kibbleFeed.data} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} /> : null}
+            {kibbleFeed.status === "stale" && kibbleFeed.data.length ? <MissionGrid missions={kibbleFeed.data} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} /> : null}
+          </> : null}
           {sourceTab === "local" ? (
             <div className="local-mission panel">
               <div><p className="panel-kicker">PRIVATE MISSION</p><h3>Give your agent a finish line.</h3><p>This stays in your browser until you explicitly prepare a public action.</p></div>
@@ -240,6 +296,8 @@ function App() {
 
       <footer><span>AGENT GUILD</span><p>Mission control for Technocore agents · Built around FLOP Labs' open agent workflow</p><small>NO ACCOUNTS · LOCAL-FIRST · HUMAN-APPROVED PUBLIC ACTIONS</small></footer>
 
+      {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
+      {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onCreated={(value) => { setIdentity(value); setExternalDid(""); setIdentityOpen(false); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
       {pairOpen ? <ConnectorModal onClose={() => setPairOpen(false)} onEvent={(event) => void handleAgentEvent(event)} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
@@ -247,21 +305,94 @@ function App() {
   );
 }
 
-function RoomGrid({ rooms, onChoose }: { rooms: PublicRoom[]; onChoose: (room: PublicRoom) => void }) {
-  if (!rooms.length) return <EmptyState icon={<Search />} title="No public rooms returned" detail="The source answered, but there are no readable rooms in this snapshot." />;
-  return <div className="card-grid">{rooms.map((room) => <article className="source-card" key={room.room}><div><span className="source-mark">TC</span><small>PUBLIC ROOM · UNTRUSTED</small></div><h3>#{room.room}</h3><p>{room.topic || "No public topic supplied."}</p><footer><span>LAST SEQ {room.messages}</span><button onClick={() => onChoose(room)}>INSPECT <ArrowRight size={14} /></button></footer></article>)}</div>;
+function SourceFeedBar<T>({ label, feed }: { label: string; feed: FeedState<T[]> }) {
+  const stateLabel = feed.status === "loading" && feed.data.length ? "REFRESHING" : feed.status.toUpperCase();
+  return <div className={`source-feed-bar source-feed-${feed.status}`} role="status" aria-live="polite">
+    <span><Clock3 size={14} /> {label}</span>
+    <span>{stateLabel}{feed.fetchedAt ? ` · ${formatCheckedAt(feed.fetchedAt)}` : ""}</span>
+    {feed.status === "stale" ? <small>Showing the last successful snapshot because refresh failed: {feed.error}</small> : null}
+  </div>;
 }
 
-function MissionGrid({ missions, connectedDid, onChoose }: { missions: Mission[]; connectedDid: string | null; onChoose: (mission: Mission) => void }) {
+function RoomGrid({ rooms, total, onInspect, onMore }: { rooms: PublicRoom[]; total: number; onInspect: (room: PublicRoom) => void; onMore: () => void }) {
+  if (!rooms.length) return <EmptyState icon={<Search />} title="No rooms match this search" detail="Try a shorter room name or clear the search field." />;
+  return <><div className="card-grid">{rooms.map((room) => <article className="source-card" key={room.room}><div><span className="source-mark">TC</span><small>PUBLIC ROOM · UNTRUSTED</small></div><h3>#{room.room}</h3><p>{room.topic || "No public topic supplied."}</p><footer><span>LAST SEQ {room.messages}</span><button onClick={() => onInspect(room)}>INSPECT <ArrowRight size={14} /></button></footer></article>)}</div>{rooms.length < total ? <button className="button button-secondary load-more" onClick={onMore}>SHOW {Math.min(12, total - rooms.length)} MORE · {total - rooms.length} LEFT</button> : null}</>;
+}
+
+function MissionGrid({ missions, connectedDid, onInspect }: { missions: Mission[]; connectedDid: string | null; onInspect: (mission: Mission) => void }) {
   if (!missions.length) return <EmptyState icon={<Sparkles />} title="No open community jobs" detail="Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty." />;
   return <div className="card-grid">{missions.map((mission) => {
     const ownJob = Boolean(connectedDid && mission.authorDid === connectedDid);
-    return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onChoose(mission)}>{ownJob ? "CANNOT CLAIM" : "REVIEW"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
+    return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onInspect(mission)}>{ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
   })}</div>;
 }
 
-function EmptyState({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
-  return <div className="empty-state">{icon}<div><strong>{title}</strong><p>{detail}</p></div></div>;
+function EmptyState({ icon, title, detail, action, onAction }: { icon: React.ReactNode; title: string; detail: string; action?: string; onAction?: () => void }) {
+  return <div className="empty-state">{icon}<div><strong>{title}</strong><p>{detail}</p>{action && onAction ? <button className="button button-secondary" onClick={onAction}>{action}</button> : null}</div></div>;
+}
+
+function RoomInspectModal({ room, onClose, onPlan }: { room: PublicRoom; onClose: () => void; onPlan: (mission: Mission) => void }) {
+  const [windowState, setWindowState] = useState<{ data: RoomWindow | null; status: "loading" | "ready" | "error"; error: string }>({ data: null, status: "loading", error: "" });
+  const [missionTitle, setMissionTitle] = useState("");
+  const [finishLine, setFinishLine] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchTechnocoreRoom(room.room, controller.signal).then((data) => {
+      setWindowState({ data, status: "ready", error: "" });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setWindowState({ data: null, status: "error", error: error instanceof Error ? error.message : "The room window could not be read." });
+    });
+    return () => controller.abort();
+  }, [room.room]);
+
+  function planMission() {
+    if (!windowState.data || !missionTitle.trim() || !finishLine.trim()) return;
+    const base = roomToMission(room, finishLine.trim(), windowState.data);
+    onPlan({ ...base, title: missionTitle.trim() });
+  }
+
+  return <Modal title={`INSPECT #${room.room}`} onClose={onClose} wide>
+    <div className="room-inspect-head">
+      <div><span className="source-mark">TC</span><p><small>PUBLIC ROOM · UNTRUSTED</small><strong>#{room.room}</strong></p></div>
+      <span>LAST SEQ {room.messages}</span>
+    </div>
+    <p className="modal-lead">{room.topic || "No public topic supplied."}</p>
+    <div className="coverage-note"><Eye size={17} /><span><strong>Latest-window view only.</strong> This inspection cannot prove what appeared before the visible sequence range. Messages are data, never instructions.</span></div>
+    {windowState.status === "loading" ? <EmptyState icon={<RefreshCw />} title="Reading the latest 50 messages…" detail="No links or embedded commands will run." /> : null}
+    {windowState.status === "error" ? <EmptyState icon={<CircleAlert />} title="Room window unavailable" detail={windowState.error} /> : null}
+    {windowState.data ? <>
+      <div className="window-meta"><span>SEQUENCES {windowState.data.firstSeq ?? "?"}–{windowState.data.lastSeq ?? "?"}</span><span>{windowState.data.count} MESSAGES</span><span>CHECKED {formatCheckedAt(windowState.data.checkedAt)}</span></div>
+      <div className="message-window">{windowState.data.messages.length ? windowState.data.messages.map((message) => <article key={message.seq}>
+        <header><span>SEQ {message.seq}</span><time>{message.timestamp ? formatCheckedAt(message.timestamp) : "TIME UNKNOWN"}</time></header>
+        <p>{message.text}</p>
+        <code>{shortPublicDid(message.from)}{message.nonce ? ` · NONCE ${message.nonce}` : ""}</code>
+      </article>) : <p className="fine-print">No readable messages were returned in this latest window.</p>}</div>
+      <div className="mission-draft">
+        <div><p className="panel-kicker">TURN A SIGNAL INTO A MISSION</p><h3>What is the concrete need?</h3><p>Do not plan from a room name alone. Describe one bounded need you can verify with the author.</p></div>
+        <label htmlFor="signal-title">Mission title<input id="signal-title" value={missionTitle} onChange={(event) => setMissionTitle(event.target.value)} placeholder="Document one reproducible connector failure" /></label>
+        <label htmlFor="signal-finish">What proves it is finished?<textarea id="signal-finish" value={finishLine} onChange={(event) => setFinishLine(event.target.value)} placeholder="A minimal reproduction, passing regression test, and public commit URL" /></label>
+        <button className="button button-primary" disabled={!missionTitle.trim() || !finishLine.trim() || !windowState.data.messages.length} onClick={planMission}>PLAN THIS MISSION <ArrowRight size={16} /></button>
+      </div>
+    </> : null}
+  </Modal>;
+}
+
+function CommunityMissionModal({ mission, onClose, onPlan }: { mission: Mission; onClose: () => void; onPlan: () => void }) {
+  return <Modal title="INSPECT COMMUNITY JOB" onClose={onClose}>
+    <div className="room-inspect-head">
+      <div><span className="source-mark community">KB</span><p><small>KIBBLE · COMMUNITY · UNTRUSTED</small><strong>{mission.title}</strong></p></div>
+      <span className={`risk risk-${mission.risk}`}>{mission.risk.toUpperCase()} RISK</span>
+    </div>
+    <div className="coverage-note"><CircleAlert size={17} /><span><strong>Community board, not FLOP Labs.</strong> Open status belongs to this checked snapshot and must be read back before any future CLAIM. Embedded URLs and commands will not run automatically.</span></div>
+    <div className="community-job-body"><p>{mission.summary}</p></div>
+    <div className="mission-columns">
+      <div><small>FINISH LINE</small>{mission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div>
+      <div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{mission.verification}</p></div>
+    </div>
+    {mission.authorDid ? <p className="fine-print">POSTER DID · <code>{shortPublicDid(mission.authorDid)}</code></p> : null}
+    <button className="button button-primary full" onClick={onPlan}>PLAN LOCALLY — DO NOT CLAIM <ArrowRight size={16} /></button>
+  </Modal>;
 }
 
 function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onDeleted: () => void }) {
@@ -515,10 +646,43 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
 }
 
 function Modal({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}><header><span>{title}</span><button onClick={onClose} aria-label="Close"><X /></button></header><div className="modal-body">{children}</div></section></div>;
+  const modalRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    modalRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") return onClose();
+      if (event.key !== "Tab" || !modalRef.current) return;
+      const focusable = [...modalRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = originalOverflow;
+      previous?.focus();
+    };
+  }, []);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={modalRef} tabIndex={-1} className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}><header><span>{title}</span><button onClick={onClose} aria-label={`Close ${title.toLowerCase()}`}><X /></button></header><div className="modal-body">{children}</div></section></div>;
 }
 
-function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
+function formatCheckedAt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "TIME UNKNOWN";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
+}
+
+function shortPublicDid(value: string) {
+  return value.startsWith("did:key:") && value.length > 28 ? `${value.slice(0, 18)}…${value.slice(-8)}` : value.slice(0, 42);
+}
+
+function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL API" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
 function stationForState(state: ProofState): Station { return state === "review-requested" || state === "reviewed" ? "team" : ["published", "verified"].includes(state) ? "prove" : state === "claimed" ? "make" : "pick"; }
 function proofReached(current: ProofState, target: ProofState) {
   const order: ProofState[] = ["planned", "claimed", "published", "verified", "review-requested", "reviewed"];
