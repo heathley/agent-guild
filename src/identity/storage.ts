@@ -25,12 +25,26 @@ export async function saveLocalIdentity(identity: EncryptedIdentity): Promise<vo
   }
 }
 
+export async function deleteLocalIdentity(): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(STORE, "readwrite");
+    transaction.objectStore(STORE).delete(ACTIVE_ID);
+    await transactionDone(transaction);
+  } finally {
+    database.close();
+  }
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 1);
+    const request = indexedDB.open(DATABASE, 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) {
         request.result.createObjectStore(STORE);
+      }
+      if (!request.result.objectStoreNames.contains("contribution-ledger")) {
+        request.result.createObjectStore("contribution-ledger");
       }
     };
     request.onsuccess = () => resolve(request.result);

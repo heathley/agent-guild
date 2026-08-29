@@ -153,6 +153,34 @@ export async function verifyText(
   }
 }
 
+export async function verifyDidSignature(
+  did: string,
+  message: string,
+  signature: string,
+): Promise<boolean> {
+  try {
+    const encoded = did.match(/^did:key:z(.+)$/u)?.[1];
+    if (!encoded) return false;
+    const decoded = base58Decode(encoded);
+    if (decoded.length !== 34 || decoded[0] !== DID_PREFIX[0] || decoded[1] !== DID_PREFIX[1]) return false;
+    const publicKey = await crypto.subtle.importKey(
+      "raw",
+      bufferOf(decoded.slice(2)),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    return crypto.subtle.verify(
+      "Ed25519",
+      publicKey,
+      bufferOf(fromBase64Url(signature)),
+      bufferOf(TEXT.encode(message)),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function exportIdentityBackup(identity: EncryptedIdentity): string {
   validateIdentity(identity);
   return JSON.stringify(identity, null, 2);
@@ -296,6 +324,28 @@ function base58Encode(bytes: Uint8Array): string {
     result += BASE58_ALPHABET[digits[index]];
   }
   return result;
+}
+
+function base58Decode(value: string): Uint8Array {
+  if (!value || [...value].some((character) => !BASE58_ALPHABET.includes(character))) {
+    throw new IdentityVaultError("The DID contains invalid base58 encoding.");
+  }
+  const bytes = [0];
+  for (const character of value) {
+    let carry = BASE58_ALPHABET.indexOf(character);
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  let leading = 0;
+  while (leading < value.length - 1 && value[leading] === BASE58_ALPHABET[0]) leading += 1;
+  return Uint8Array.from([...new Array(leading).fill(0), ...bytes.reverse()]);
 }
 
 function toBase64Url(bytes: Uint8Array): string {

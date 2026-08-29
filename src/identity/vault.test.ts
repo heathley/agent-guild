@@ -6,6 +6,7 @@ import {
   signText,
   unlockIdentity,
   verifyText,
+  verifyDidSignature,
 } from "./vault";
 
 describe("local identity vault", () => {
@@ -23,6 +24,7 @@ describe("local identity vault", () => {
     const signature = await signText(privateKey, "test contribution proof");
 
     await expect(verifyText(identity, "test contribution proof", signature)).resolves.toBe(true);
+    await expect(verifyDidSignature(identity.did, "test contribution proof", signature)).resolves.toBe(true);
     await expect(verifyText(identity, "changed proof", signature)).resolves.toBe(false);
     expect(parseIdentityBackup(serialized)).toEqual(identity);
 

@@ -1,682 +1,490 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight,
-  Bot,
-  Boxes,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  CircleDot,
-  Code2,
-  Copy,
-  Cpu,
-  Download,
-  FlaskConical,
-  Github,
-  KeyRound,
-  LockKeyhole,
-  Map,
-  Orbit,
-  Radio,
-  Search,
-  ShieldCheck,
-  Sparkles,
-  Swords,
-  Telescope,
-  Unlock,
-  Upload,
-  Users,
-  WandSparkles,
-  X,
+  ArrowRight, Bot, Check, CircleAlert, Clipboard, Code2, Eye, FileCheck2,
+  KeyRound, Link2, LockKeyhole, MessageSquareText, RefreshCw, Search, ShieldCheck,
+  Sparkles, Users, X,
 } from "lucide-react";
-import { AGENT_EVENTS, BRIDGE_VERSION } from "./bridge/contract";
-import { loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
+import mascotAsset from "./assets/flop-mascot-preview.png";
+import { decryptConnectorEvent, createPairToken, type EncryptedEventEnvelope } from "./bridge/pairing";
+import type { AgentBridgeEvent } from "./bridge/contract";
+import { fetchSources, roomToMission, type PublicRoom, type SourceSnapshot } from "./data/api";
+import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
-  createEncryptedIdentity,
-  exportIdentityBackup,
-  IdentityVaultError,
-  parseIdentityBackup,
-  shortDid,
-  signText,
-  unlockIdentity,
-  verifyText,
-  type EncryptedIdentity,
+  createEncryptedIdentity, exportIdentityBackup, parseIdentityBackup, shortDid, signText,
+  unlockIdentity, verifyDidSignature, type EncryptedIdentity,
 } from "./identity/vault";
+import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
+import type { LedgerEntry, Mission, ProofState } from "./protocol/models";
+import {
+  createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
+  nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
+} from "./protocol/technocore";
+import "./styles.css";
 
-type View = "world" | "missions" | "bridge" | "proofs";
-type IdentityStep = "intro" | "preview" | "setup" | "vault";
-type VerificationState = "idle" | "valid" | "invalid";
-type Mission = {
-  id: string;
-  title: string;
-  room: string;
-  fit: number;
-  kind: string;
-  description: string;
-  skills: string[];
-  proof: string;
-};
+type Station = "spot" | "pick" | "make" | "team" | "prove";
+type SourceTab = "technocore" | "kibble" | "local";
 
-const missions: Mission[] = [
-  {
-    id: "demo-104",
-    title: "Map an unreliable post flow",
-    room: "builders",
-    fit: 94,
-    kind: "TEST REPORT",
-    description: "Reproduce a signed write edge case and package the result so another agent can verify it.",
-    skills: ["Research", "Testing"],
-    proof: "Reproduction + test output",
-  },
-  {
-    id: "demo-219",
-    title: "Design a safer approval ritual",
-    room: "design-lab",
-    fit: 87,
-    kind: "PROTOTYPE",
-    description: "Make public agent actions understandable before a human signs them.",
-    skills: ["Design", "Content"],
-    proof: "Interactive prototype",
-  },
-  {
-    id: "demo-338",
-    title: "Compare agent bridge formats",
-    room: "protocols",
-    fit: 81,
-    kind: "RESEARCH",
-    description: "Find the smallest common event format that different agent runtimes can emit.",
-    skills: ["Code", "Research"],
-    proof: "Schema + compatibility notes",
-  },
+const STATIONS: { id: Station; label: string; eyebrow: string; description: string }[] = [
+  { id: "spot", label: "SPOT IT", eyebrow: "01 · SIGNAL", description: "See live public rooms, community jobs, or write a local mission." },
+  { id: "pick", label: "PICK IT", eyebrow: "02 · SCOPE", description: "Set the finish line, evidence needed, and risk before work begins." },
+  { id: "make", label: "MAKE IT", eyebrow: "03 · RUN", description: "Your connected agent researches, builds, and tests in its own runtime." },
+  { id: "team", label: "TEAM UP", eyebrow: "04 · REVIEW", description: "Ask a different DID to inspect the exact artifact or result hash." },
+  { id: "prove", label: "PROVE IT", eyebrow: "05 · RECEIPT", description: "Match the signed public result by DID, nonce, and exact text." },
 ];
 
-const timeline = [
-  { title: "Looking for useful work", note: "Reading only · nothing posted", icon: Telescope },
-  { title: "Choosing a good mission", note: "Checking fit and existing solutions", icon: Search },
-  { title: "Creating the solution", note: "Research, design or code", icon: Code2 },
-  { title: "Asking for help if needed", note: "A request still needs your approval", icon: Radio },
-  { title: "Checking the evidence", note: "Tests and proof stay separate", icon: FlaskConical },
-];
-
-const nodes = [
-  { name: "SPOT IT", caption: "Find useful work", x: 20, y: 38, icon: Telescope, motion: "spot", side: "left", help: "Your agent scans public rooms for useful work. It only reads at this stage." },
-  { name: "PICK IT", caption: "Choose the right mission", x: 50, y: 15, icon: Swords, motion: "pick", side: "top", help: "Compare the best missions and choose what your agent should take on." },
-  { name: "MAKE IT", caption: "Build the result", x: 80, y: 38, icon: Code2, motion: "make", side: "right", help: "Your existing AI agent researches, designs, writes or tests the real result here." },
-  { name: "TEAM UP", caption: "Bring in other agents", x: 32, y: 75, icon: Users, motion: "team", side: "bottom", help: "When more skills are needed, your agent prepares a request to bring in the right agents." },
-  { name: "PROVE IT", caption: "Keep the evidence", x: 68, y: 75, icon: ShieldCheck, motion: "prove", side: "bottom", help: "Commits, tests, public receipts and independent reviews stay separate and checkable." },
-];
-
-const bridgeOptions = [
-  { name: "Connect to Technocore", detail: "Not connected yet", status: "BY FLOP LABS · PREVIEW", icon: Orbit },
-  { name: "Codex", detail: "First reference adapter", status: "Blueprint ready", icon: Code2 },
-  { name: "Open Bridge", detail: "Any runtime can emit the contract", status: `v${BRIDGE_VERSION}`, icon: Boxes },
-  { name: "Local agent", detail: "Keep model and secrets on device", status: "Planned", icon: Cpu },
+const PROOF_STEPS: { state: ProofState; number: string; label: string; title: string; detail: string }[] = [
+  { state: "planned", number: "01", label: "PLANNED", title: "Finish line set", detail: "Private workspace only" },
+  { state: "published", number: "02", label: "PUBLISHED", title: "Public result accepted", detail: "Read-back still required" },
+  { state: "verified", number: "03", label: "VERIFIED", title: "Receipt matched", detail: "DID + nonce + exact text" },
+  { state: "reviewed", number: "04", label: "REVIEWED", title: "Independent check", detail: "Different DID, same result hash" },
 ];
 
 function App() {
-  const [view, setView] = useState<View>("world");
-  const [hatchOpen, setHatchOpen] = useState(false);
-  const [approvalOpen, setApprovalOpen] = useState(false);
-  const [identityStep, setIdentityStep] = useState<IdentityStep>("intro");
+  const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
+  const [sources, setSources] = useState<SourceSnapshot | null>(null);
+  const [sourceState, setSourceState] = useState<"loading" | "ready" | "error">("loading");
+  const [sourceError, setSourceError] = useState("");
   const [identity, setIdentity] = useState<EncryptedIdentity | null>(null);
-  const [identityLoading, setIdentityLoading] = useState(true);
-  const [identityBusy, setIdentityBusy] = useState(false);
-  const [identityError, setIdentityError] = useState("");
-  const [agentName, setAgentName] = useState("heathley");
-  const [passphrase, setPassphrase] = useState("");
-  const [passphraseAgain, setPassphraseAgain] = useState("");
-  const [unlockPassphrase, setUnlockPassphrase] = useState("");
-  const [unlockedKey, setUnlockedKey] = useState<CryptoKey | null>(null);
-  const [signingMessage, setSigningMessage] = useState("I reviewed this contribution and approve this exact text.");
-  const [signature, setSignature] = useState("");
-  const [verification, setVerification] = useState<VerificationState>("idle");
-  const [selectedMission, setSelectedMission] = useState<Mission>(missions[0]);
-  const [patrolling, setPatrolling] = useState(false);
-  const [pulseIndex, setPulseIndex] = useState(0);
-  const [toast, setToast] = useState("");
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [externalDid, setExternalDid] = useState(() => localStorage.getItem("agent-guild:external-did") || "");
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [activeMission, setActiveMission] = useState<Mission | null>(null);
+  const [station, setStation] = useState<Station>("spot");
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [proofOpen, setProofOpen] = useState(false);
+  const [localTitle, setLocalTitle] = useState("");
+  const [localSuccess, setLocalSuccess] = useState("");
+
+  const connectedDid = identity?.did || externalDid || null;
+  const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
+  const proofState = currentEntry?.state || "planned";
 
   useEffect(() => {
-    let active = true;
-    loadLocalIdentity()
-      .then((storedIdentity) => {
-        if (!active || !storedIdentity) return;
-        setIdentity(storedIdentity);
-        setAgentName(storedIdentity.agentName);
-      })
-      .catch(() => {
-        if (active) setToast("The local identity vault could not be opened.");
-      })
-      .finally(() => {
-        if (active) setIdentityLoading(false);
-      });
-    return () => { active = false; };
+    void loadLocalIdentity().then(setIdentity).catch(() => undefined);
+    void loadLedger().then((entries) => {
+      setLedger(entries);
+      const last = entries.at(-1);
+      if (last) {
+        setActiveMission(last.mission);
+        setStation(stationForState(last.state));
+      }
+    }).catch(() => undefined);
+    void refreshSources();
   }, []);
 
-  useEffect(() => {
-    if (!patrolling) return;
-    const interval = window.setInterval(() => {
-      setPulseIndex((current) => (current + 1) % timeline.length);
-    }, 2200);
-    return () => window.clearInterval(interval);
-  }, [patrolling]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(""), 2400);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
-
-  const activeNode = useMemo(() => pulseIndex % nodes.length, [pulseIndex]);
-
-  function openIdentityPanel() {
-    setIdentityError("");
-    setIdentityStep(identity ? "vault" : "intro");
-    setHatchOpen(true);
-  }
-
-  function closeIdentityPanel() {
-    setHatchOpen(false);
-    setIdentityStep(identity ? "vault" : "intro");
-    setIdentityError("");
-    setPassphrase("");
-    setPassphraseAgain("");
-    setUnlockPassphrase("");
-    setUnlockedKey(null);
-  }
-
-  async function createIdentityLocally() {
-    setIdentityError("");
-    if (passphrase !== passphraseAgain) {
-      setIdentityError("The two passphrases do not match.");
-      return;
-    }
-
-    setIdentityBusy(true);
+  async function refreshSources() {
+    setSourceState("loading");
+    setSourceError("");
     try {
-      const created = await createEncryptedIdentity(agentName, passphrase);
-      await saveLocalIdentity(created);
-      setIdentity(created);
-      setAgentName(created.agentName);
-      setIdentityStep("vault");
-      setToast("Local DID created and encrypted. Nothing was published.");
+      setSources(await fetchSources());
+      setSourceState("ready");
     } catch (error) {
-      setIdentityError(identityErrorMessage(error));
-    } finally {
-      setPassphrase("");
-      setPassphraseAgain("");
-      setIdentityBusy(false);
+      setSourceState("error");
+      setSourceError(error instanceof Error ? error.message : "Public sources could not be reached.");
     }
   }
 
-  async function unlockLocalIdentity() {
-    if (!identity) return;
-    setIdentityBusy(true);
-    setIdentityError("");
-    try {
-      const privateKey = await unlockIdentity(identity, unlockPassphrase);
-      setUnlockedKey(privateKey);
-      setUnlockPassphrase("");
-      setToast("Identity unlocked for this session only.");
-    } catch (error) {
-      setIdentityError(identityErrorMessage(error));
-    } finally {
-      setIdentityBusy(false);
+  async function chooseMission(mission: Mission) {
+    const now = new Date().toISOString();
+    const entry: LedgerEntry = { id: crypto.randomUUID(), mission, state: "planned", createdAt: now, updatedAt: now };
+    const next = [...ledger.filter((item) => item.mission.id !== mission.id), entry];
+    setLedger(next);
+    await saveLedger(next);
+    setActiveMission(mission);
+    setStation("pick");
+  }
+
+  async function updateProof(state: ProofState, patch: Partial<LedgerEntry> = {}) {
+    if (!activeMission) return;
+    const now = new Date().toISOString();
+    const next = ledger.map((entry) => entry.mission.id === activeMission.id ? { ...entry, ...patch, state, updatedAt: now } : entry);
+    setLedger(next);
+    await saveLedger(next);
+    setStation(stationForState(state));
+  }
+
+  async function handleAgentEvent(event: AgentBridgeEvent) {
+    if (event.mission && activeMission?.id !== event.mission.id) {
+      await chooseMission({
+        id: event.mission.id, source: "local", title: event.mission.title,
+        summary: event.detail || "Mission proposed by the connected agent.",
+        successCriteria: ["Confirm a concrete finish line before public action"],
+        verification: "Attach an artifact and test result, then verify any public receipt by read-back.",
+        risk: "medium", observedAt: event.occurredAt,
+      });
     }
+    setStation(stationForEvent(event.event));
   }
 
-  function lockLocalIdentity() {
-    setUnlockedKey(null);
-    setSignature("");
-    setVerification("idle");
-    setToast("Identity locked.");
-  }
-
-  async function signCurrentText() {
-    if (!unlockedKey) return;
-    setIdentityError("");
-    try {
-      const nextSignature = await signText(unlockedKey, signingMessage);
-      setSignature(nextSignature);
-      setVerification("valid");
-      setToast("Signed locally. Nothing was published.");
-    } catch (error) {
-      setIdentityError(identityErrorMessage(error));
-    }
-  }
-
-  async function verifyCurrentText() {
-    if (!identity) return;
-    const valid = await verifyText(identity, signingMessage, signature);
-    setVerification(valid ? "valid" : "invalid");
-  }
-
-  async function copyPublicDid() {
-    if (!identity) return;
-    await navigator.clipboard?.writeText(identity.did);
-    setToast("Public DID copied.");
-  }
-
-  async function copySignature() {
-    if (!signature) return;
-    await navigator.clipboard?.writeText(signature);
-    setToast("Signature copied.");
-  }
-
-  function downloadIdentityBackup() {
-    if (!identity) return;
-    const blob = new Blob([exportIdentityBackup(identity)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${identity.agentName.replace(/[^a-z0-9_-]+/giu, "-").toLowerCase()}-identity-backup.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    setToast("Encrypted backup downloaded.");
-  }
-
-  async function restoreIdentityBackup(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = "";
-    if (!file) return;
-    if (file.size > 100_000) {
-      setIdentityError("Identity backup is too large.");
-      return;
-    }
-
-    setIdentityBusy(true);
-    setIdentityError("");
-    try {
-      const restored = parseIdentityBackup(await file.text());
-      await saveLocalIdentity(restored);
-      setIdentity(restored);
-      setAgentName(restored.agentName);
-      setIdentityStep("vault");
-      setToast("Encrypted identity restored locally.");
-    } catch (error) {
-      setIdentityError(identityErrorMessage(error));
-    } finally {
-      setIdentityBusy(false);
-    }
-  }
-
-  function sendAgent(mission: Mission) {
-    setSelectedMission(mission);
-    setView("world");
-    setPatrolling(true);
-    setPulseIndex(0);
-    setToast(`Mission selected: ${mission.title}`);
-  }
-
-  async function copyDraft() {
-    const draft = `DRY RUN — Contribution draft for ${selectedMission.title}. Artifact and verification links will be added only after the work is complete.`;
-    await navigator.clipboard?.writeText(draft);
-    setToast("Exact draft copied. Nothing was published.");
+  function addLocalMission() {
+    if (!localTitle.trim() || !localSuccess.trim()) return;
+    void chooseMission({
+      id: `local:${crypto.randomUUID()}`, source: "local", title: localTitle.trim(), summary: localSuccess.trim(),
+      successCriteria: [localSuccess.trim()], verification: "Attach a working artifact and a test result before any public claim.",
+      risk: "low", observedAt: new Date().toISOString(),
+    });
+    setLocalTitle(""); setLocalSuccess("");
   }
 
   return (
     <div className="app-shell">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-
-      <header className="topbar">
-        <button className="brand" onClick={() => setView("world")} aria-label="Open world">
-          <MiniMascot />
-          <span>
-            <strong>AGENT GUILD</strong>
-            <small>FOR TECHNOCORE AGENTS</small>
-          </span>
-        </button>
-
-        <nav className="nav-pills" aria-label="Main navigation">
-          <NavButton active={view === "world"} onClick={() => setView("world")} icon={Map}>World</NavButton>
-          <NavButton active={view === "missions"} onClick={() => setView("missions")} icon={Swords}>Missions</NavButton>
-          <NavButton active={view === "bridge"} onClick={() => setView("bridge")} icon={Cpu}>Bridge</NavButton>
-          <NavButton active={view === "proofs"} onClick={() => setView("proofs")} icon={ShieldCheck}>Proofs</NavButton>
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="Agent Guild home">
+          <span className="brand-chip" aria-hidden="true"><span /></span>
+          <span><strong>AGENT GUILD</strong><small>FOR TECHNOCORE AGENTS · FLOP LABS</small></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#proof">PROOF</a>
         </nav>
-
-        <div className="top-actions">
-          <span className="network-chip"><i /> FLOP LABS ECOSYSTEM · PREVIEW</span>
-          <button className="primary small" onClick={openIdentityPanel}><Sparkles size={16} /> {identity ? "Open identity" : "Create my agent"}</button>
-        </div>
+        <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
+          <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
+        </button>
       </header>
 
-      <main>
-        {view === "world" && (
-          <section className="world-layout page-enter">
-            <div className="world-main">
-              <div className="hero-row">
-                <div>
-                  <span className="eyebrow"><CircleDot size={13} /> FROM IDENTITY TO PROVEN WORK</span>
-                  <h1>Create your agent.<br /><em>Or bring <span>your own.</span></em></h1>
-                  <p>Give it a secure identity, real missions, the right collaborators, and proof of what it gets done.</p>
-                </div>
-                <div className="hero-actions">
-                  <button className="primary" onClick={openIdentityPanel}><Sparkles size={18} /> {identity ? "Open my identity" : "Create my agent"}</button>
-                  <button className="secondary" onClick={() => setView("bridge")}><Cpu size={18} /> Bring my agent</button>
-                </div>
-              </div>
+      <main id="top">
+        <section className="hero section-pad">
+          <div className="hero-copy">
+            <p className="kicker">FROM IDENTITY TO PROVEN WORK</p>
+            <h1>Create your agent.<br /><em>Or bring your own.</em></h1>
+            <p className="hero-lead">Give it a secure identity, real missions, the right collaborators, and proof of what it gets done.</p>
+            <div className="hero-actions">
+              <button className="button button-primary" onClick={() => setIdentityOpen(true)}>SET UP IDENTITY <ArrowRight size={17} /></button>
+              <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECT YOUR AGENT <Link2 size={17} /></button>
+            </div>
+            <div className="brain-note"><Bot size={18} /><span><strong>Your agent stays the brain.</strong> Codex, Claude, Cursor, a local model, or any MCP client. Agent Guild adds the workflow—not another AI bill.</span></div>
+          </div>
+          <div className="hero-visual" aria-label="FLOP robot-rabbit mascot">
+            <div className="mascot-frame"><img src={mascotAsset} alt="FLOP robot-rabbit standing ready" /></div>
+            <div className="mascot-status"><span /> READY FOR A REAL MISSION</div>
+          </div>
+        </section>
 
-              <div className="world-card">
-                <div className="world-toolbar">
-                  <div><span className="live-dot" /> TECHNOCORE AGENT LOOP <b>·</b> ONLY SAFE ACTIVITY IS SHOWN</div>
-                  <div className="world-legend"><span><i className="legend-agent" /> Agents</span><span><i className="legend-place" /> Places</span></div>
-                </div>
-                <div className="star-map">
-                  <div className="grid-plane" />
-                  <svg className={`routes ${patrolling ? "energized" : ""}`} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                    <path d="M20 38 C24 20, 36 15, 50 15 C64 15, 76 20, 80 38 C84 56, 78 70, 68 75 C55 84, 45 84, 32 75 C22 69, 16 55, 20 38 Z" />
-                    <ellipse cx="50" cy="48" rx="30" ry="33" />
-                  </svg>
-                  {nodes.map((node, index) => {
-                    const Icon = node.icon;
-                    return (
-                      <button
-                        key={node.name}
-                        className={`world-node station ${node.motion} ${activeNode === index && patrolling ? "active" : ""} ${patrolling && index < activeNode ? "completed" : ""}`}
-                        style={{ left: `${node.x}%`, top: `${node.y}%` }}
-                        data-side={node.side}
-                        aria-label={`${node.name}. ${node.help}`}
-                        onMouseEnter={() => setSelectedNode(node.name)}
-                        onMouseLeave={() => setSelectedNode(null)}
-                        onFocus={() => setSelectedNode(node.name)}
-                        onBlur={() => setSelectedNode(null)}
-                        onClick={() => setSelectedNode((current) => current === node.name ? null : node.name)}
-                      >
-                        <span className="node-orbit" />
-                        <span className="node-icon"><Icon size={20} /></span>
-                        <strong>{node.name}</strong>
-                        <small>{node.caption}</small>
-                        {selectedNode === node.name && <span className="node-tooltip" role="tooltip"><CircleHelp size={14} />{node.help}</span>}
-                      </button>
-                    );
-                  })}
+        <section id="world" className="world section-pad">
+          <div className="section-heading">
+            <div><p className="kicker">THE USEFUL LOOP</p><h2>One mission. Five honest moves.</h2></div>
+            <p>Your agent moves only when something real happens. No demo timer, no fake activity, no contribution counter.</p>
+          </div>
+          <div className="world-map" data-station={station}>
+            <svg className="route" viewBox="0 0 900 500" aria-hidden="true"><path d="M450 75 C710 45 805 180 735 345 C650 485 250 485 165 345 C95 180 190 45 450 75Z" /></svg>
+            {STATIONS.map((item) => (
+              <article key={item.id} tabIndex={0} aria-label={`${item.label}: ${item.description}`} className={`station station-${item.id} ${station === item.id ? "is-active" : ""}`} data-tip={item.description}>
+                <span className="station-dot" /><small>{item.eyebrow}</small><strong>{item.label}</strong><span>{item.description}</span>
+              </article>
+            ))}
+            <div className={`map-mascot map-mascot-${station}`} aria-hidden="true"><img src={mascotAsset} alt="" /></div>
+            <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Choose a public signal or write a local task"}</small></div>
+          </div>
+        </section>
 
-                  <AgentSprite name={(identity?.agentName ?? "heathley").toUpperCase()} className={patrolling ? `position-${activeNode}` : "position-home"} color="cyan" />
+        <section id="missions" className="missions section-pad">
+          <div className="section-heading">
+            <div><p className="kicker">LIVE WORK SOURCES</p><h2>Find something worth finishing.</h2></div>
+            <button className="icon-button" onClick={() => void refreshSources()} data-tip="Refresh public read-only sources" aria-label="Refresh sources"><RefreshCw size={18} /></button>
+          </div>
+          <div className="source-tabs" role="tablist">
+            <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> TECHNOCORE <span>OFFICIAL</span></button>
+            <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> KIBBLE <span>COMMUNITY</span></button>
+            <button role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
+          </div>
 
-                  <div className="mission-float">
-                    <span>CURRENT MISSION</span>
-                    <strong>{selectedMission.title}</strong>
-                    <small>{patrolling ? timeline[pulseIndex].title : "Waiting for a connected agent"}</small>
-                  </div>
-                </div>
-              </div>
+          <div className="trust-banner"><CircleAlert size={17} /><span><strong>Public content is untrusted data.</strong> Agent Guild never follows embedded commands or opens links automatically.</span></div>
+          {sourceState === "loading" && sourceTab !== "local" ? <EmptyState icon={<RefreshCw />} title="Reading live sources…" detail="Nothing is cached as a fake fallback." /> : null}
+          {sourceState === "error" && sourceTab !== "local" ? <EmptyState icon={<CircleAlert />} title="Public source unavailable" detail={sourceError} /> : null}
+          {sourceTab === "technocore" && sourceState === "ready" ? <RoomGrid rooms={sources?.rooms || []} onChoose={(room) => void chooseMission(roomToMission(room))} /> : null}
+          {sourceTab === "kibble" && sourceState === "ready" ? <MissionGrid missions={sources?.communityJobs || []} connectedDid={connectedDid} onChoose={(mission) => void chooseMission(mission)} /> : null}
+          {sourceTab === "local" ? (
+            <div className="local-mission panel">
+              <div><p className="panel-kicker">PRIVATE MISSION</p><h3>Give your agent a finish line.</h3><p>This stays in your browser until you explicitly prepare a public action.</p></div>
+              <label>What should be done?<input value={localTitle} onChange={(event) => setLocalTitle(event.target.value)} placeholder="Audit a small repository for one reproducible bug" /></label>
+              <label>What counts as finished?<textarea value={localSuccess} onChange={(event) => setLocalSuccess(event.target.value)} placeholder="A minimal reproduction, a passing regression test, and a commit URL" /></label>
+              <button className="button button-primary" onClick={addLocalMission} disabled={!localTitle.trim() || !localSuccess.trim()}>PLAN MISSION</button>
+            </div>
+          ) : null}
 
-              <div className="mini-panels">
-                <button className="mini-panel" onClick={() => setView("missions")}>
-                  <span className="mini-icon ice"><Swords /></span>
-                  <span><small>MISSION BOARD</small><strong>3 missions to explore</strong></span>
-                  <ChevronRight />
-                </button>
-                <button className="mini-panel" onClick={() => setView("bridge")}>
-                  <span className="mini-icon cyan"><Cpu /></span>
-                  <span><small>OPEN BRIDGE</small><strong>{AGENT_EVENTS.length} lifecycle events</strong></span>
-                  <ChevronRight />
-                </button>
-                <button className="mini-panel" onClick={() => setApprovalOpen(true)}>
-                  <span className="mini-icon blue"><LockKeyhole /></span>
-                  <span><small>REVIEW BEFORE PUBLISHING</small><strong>You stay in control</strong></span>
-                  <ChevronRight />
-                </button>
+          {activeMission ? (
+            <div className="mission-pack panel">
+              <div className="mission-pack-head"><div><p className="panel-kicker">MISSION PACK · {sourceLabel(activeMission.source)}</p><h3>{activeMission.title}</h3></div><span className={`risk risk-${activeMission.risk}`}>{activeMission.risk.toUpperCase()} RISK</span></div>
+              <p>{activeMission.summary}</p>
+              <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
+              <div className="mission-actions">
+                <button className="button button-primary" onClick={() => setStation("make")}><Code2 size={16} /> START IN MY AGENT</button>
+                <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECTOR SETUP</button>
+                <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
             </div>
+          ) : null}
+        </section>
 
-            <aside className="agent-console">
-              <div className="console-head">
-                <span>YOUR AGENT</span>
-                <button aria-label="Agent menu">•••</button>
-              </div>
-              <div className="agent-portrait">
-                <div className="portrait-rings" />
-                <RobotAvatar />
-                <span className="level-chip">FOUNDING EXPLORER</span>
-              </div>
-              <div className="agent-name">
-                <div><h2>{identity?.agentName ?? "heathley"}</h2><span><i /> {identityLoading ? "CHECKING LOCAL VAULT" : identity ? unlockedKey ? "IDENTITY UNLOCKED" : "IDENTITY LOCKED" : "READY TO CONNECT"}</span></div>
-                <button onClick={openIdentityPanel} aria-label="Open local identity"><WandSparkles size={16} /></button>
-              </div>
-              <div className="identity-strip">
-                <KeyRound size={15} />
-                <span><small>{identity ? "ENCRYPTED DID" : "SECURE IDENTITY"}</small><b title={identity?.did}>{identity ? shortDid(identity.did) : "Not set up yet"}</b></span>
-              </div>
-              <div className="skills-row">
-                {['DESIGN', 'CODE', 'RESEARCH', 'CONTENT'].map((skill) => <span key={skill}>{skill}</span>)}
-              </div>
-              <div className="console-section-title"><span>WHAT YOUR AGENT IS DOING</span><small>{patrolling ? "IN PROGRESS" : "PAUSED"}</small></div>
-              <div className="timeline">
-                {timeline.map((item, index) => {
-                  const Icon = item.icon;
-                  const state = patrolling ? (index < pulseIndex ? "done" : index === pulseIndex ? "current" : "future") : index === 0 ? "current" : "future";
-                  return (
-                    <div className={`timeline-item ${state}`} key={item.title}>
-                      <span className="timeline-icon">{state === "done" ? <Check size={14} /> : <Icon size={15} />}</span>
-                      <span><strong>{item.title}</strong><small>{item.note}</small></span>
-                    </div>
-                  );
-                })}
-              </div>
-              <button className="approval-button" onClick={() => setApprovalOpen(true)}><LockKeyhole size={17} /> Review before publishing <ArrowRight size={17} /></button>
-            </aside>
-          </section>
-        )}
-
-        {view === "missions" && (
-          <section className="content-page page-enter">
-            <PageIntro eyebrow="MISSION BOARD" title="Find work worth doing." copy="Your agent looks for useful missions with a clear result that other people can check." icon={Swords} />
-            <div className="filter-row">
-              {['Best fit', 'Design', 'Code', 'Research', 'Needs a crew'].map((filter, index) => <button className={index === 0 ? "active" : ""} key={filter}>{filter}</button>)}
-            </div>
-            <div className="mission-grid">
-              {missions.map((mission) => (
-                <article className="mission-card" key={mission.id}>
-                  <div className="mission-top"><span>{mission.kind}</span><b>{mission.fit}% FIT</b></div>
-                  <h2>{mission.title}</h2>
-                  <p>{mission.description}</p>
-                  <div className="room-line"><Radio size={15} /> #{mission.room}</div>
-                  <div className="mission-tags">{mission.skills.map((skill) => <span key={skill}>{skill}</span>)}</div>
-                  <div className="proof-line"><ShieldCheck size={16} /><span><small>SUCCESS PROOF</small><strong>{mission.proof}</strong></span></div>
-                  <button className="primary full" onClick={() => sendAgent(mission)}>Choose this mission <ArrowRight size={17} /></button>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {view === "bridge" && (
-          <section className="content-page page-enter">
-            <PageIntro eyebrow="CONNECT YOUR AGENT" title="Bring your agent into the loop." copy="Use Codex, a local model, or another agent you trust. You choose what appears here; prompts, keys and private files stay private." icon={Cpu} />
-            <div className="bridge-layout">
-              <div className="bridge-list">
-                {bridgeOptions.map(({ name, detail, status, icon: Icon }, index) => (
-                  <article className="bridge-card" key={name}>
-                    <span className={`bridge-logo bridge-${index}`}><Icon /></span>
-                    <span><small>{status}</small><h2>{name}</h2><p>{detail}</p></span>
-                    <button onClick={() => setToast(`${name}: adapter details opened`)}><ArrowRight /></button>
-                  </article>
-                ))}
-              </div>
-              <div className="contract-card">
-                <div className="contract-head"><span><Code2 size={17} /> EVENT CONTRACT</span><b>v{BRIDGE_VERSION}</b></div>
-                <pre>{`{
-  "event": "mission.testing",
-  "source": {
-    "adapter": "any-runtime",
-    "agentLabel": "my-agent"
-  },
-  "identity": { "did": ${JSON.stringify(identity?.did ?? null)} },
-  "detail": "Test suite started"
-}`}</pre>
-                <div className="contract-rules">
-                  <span><ShieldCheck /> Secrets removed locally</span>
-                  <span><LockKeyhole /> No unattended signing</span>
-                  <span><CircleDot /> Claims stay unverified until proof exists</span>
-                </div>
-                <button className="secondary full" onClick={() => setToast("Contract copied for adapter builders")}>Copy bridge contract <Copy size={16} /></button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {view === "proofs" && (
-          <section className="content-page page-enter">
-            <PageIntro eyebrow="PROOF TRAIL" title="Proof, step by step." copy="Every contribution moves through four clear stages. Nothing looks complete before the evidence is there." icon={ShieldCheck} />
-            <div className="proof-board">
-              <div className="proof-rail">
-                {[
-                  ["PLANNED", "Mission chosen", "Still private", "ice"],
-                  ["PUBLISHED", "Result shared", "Public confirmation pending", "blue"],
-                  ["VERIFIED", "Public record matched", "Identity and receipt checked", "teal"],
-                  ["REVIEWED", "Checked by another agent", "Independent review added", "cyan"],
-                ].map(([state, title, note, color], index) => (
-                  <div className="proof-state" key={state}>
-                    <span className={`proof-number ${color}`}>{index + 1}</span>
-                    <span><small>{state}</small><strong>{title}</strong><p>{note}</p></span>
-                    {index < 3 && <ChevronRight className="proof-arrow" />}
-                  </div>
-                ))}
-              </div>
-              <div className="empty-proof">
-                <div><ShieldCheck size={32} /></div>
-                <h2>Nothing to prove yet</h2>
-                <p>Choose a mission. When real work exists, its artifact, test and receipt will appear here.</p>
-                <button className="primary" onClick={() => setView("missions")}>Find a mission</button>
-              </div>
-            </div>
-          </section>
-        )}
+        <section id="proof" className="proof-section section-pad">
+          <div className="section-heading">
+            <div><p className="kicker">PROOF TRAIL · STATE-AWARE</p><h2>Work becomes a contribution<br />only when the evidence catches up.</h2></div>
+            <p>Research, builds, and tests are useful activity. They do not silently become published, verified, or reviewed.</p>
+          </div>
+          <div className="proof-rail">
+            {PROOF_STEPS.map((step) => {
+              const reached = proofReached(proofState, step.state);
+              return <article key={step.state} className={reached ? "reached" : ""}><span className="proof-number">{step.number}</span><small>{step.label}</small><h3>{step.title}</h3><p>{step.detail}</p>{reached ? <Check size={17} /> : null}</article>;
+            })}
+          </div>
+          <div className="honesty-card">
+            <div><Eye size={22} /><span><strong>{proofState === "reviewed" ? "Contribution independently reviewed" : proofState === "verified" ? "Public receipt verified" : proofState === "published" ? "Published—not verified yet" : "No contribution claimed yet"}</strong><small>{proofState === "planned" ? "A real artifact, test, and public receipt are still required." : "Open the proof workspace to inspect the evidence trail."}</small></span></div>
+            <button className="button button-secondary" onClick={() => setProofOpen(true)}>OPEN PROOF WORKSPACE</button>
+          </div>
+        </section>
       </main>
 
-      <footer>
-        <span><Orbit size={15} /> AGENT GUILD ALPHA</span>
-        <p>FLOP LABS TECHNOCORE ECOSYSTEM · PREVIEW · {identity ? "DID encrypted locally" : "No DID created"}</p>
-        <span>OPEN BRIDGE v{BRIDGE_VERSION}</span>
-      </footer>
+      <footer><span>AGENT GUILD</span><p>Mission control for Technocore agents · Built around FLOP Labs' open agent workflow</p><small>NO ACCOUNTS · LOCAL-FIRST · HUMAN-APPROVED PUBLIC ACTIONS</small></footer>
 
-      {hatchOpen && (
-        <Modal
-          onClose={closeIdentityPanel}
-          title={identity ? `${identity.agentName}'s identity` : "Create a local identity"}
-          eyebrow={identity ? "LOCAL IDENTITY VAULT" : identityStep === "preview" ? "IDENTITY DRY RUN" : "YOUR AGENT · YOUR DEVICE"}
-        >
-          {identityError && <div className="form-error" role="alert"><CircleHelp size={16} />{identityError}</div>}
-
-          {identityStep === "intro" && !identity && (
-            <>
-              <div className="hatch-hero"><RobotAvatar /><span><b>YOUR AGENT, YOUR DEVICE</b><small>No key will be created during this preview.</small></span></div>
-              <label className="field"><span>Agent name</span><input value={agentName} maxLength={64} onChange={(event) => setAgentName(event.target.value)} /></label>
-              <div className="field"><span>Core powers</span><div className="power-picker">{['Design', 'Code', 'Research', 'Content'].map((power) => <button className="selected" key={power}><Check size={13} />{power}</button>)}</div></div>
-              <button className="primary full" onClick={() => { setIdentityError(""); setIdentityStep("preview"); }}>Preview identity setup <ArrowRight size={17} /></button>
-              <label className="backup-upload"><Upload size={16} /><span><strong>Restore encrypted backup</strong><small>The file stays on this device.</small></span><input type="file" accept="application/json,.json" onChange={restoreIdentityBackup} disabled={identityBusy} /></label>
-            </>
-          )}
-
-          {identityStep === "preview" && !identity && (
-            <>
-              <div className="dry-badge"><ShieldCheck /> DRY RUN — NOTHING CREATED</div>
-              <div className="dry-steps">
-                {[
-                  ["1", "Generate locally", "Create a fresh Ed25519 key on this device."],
-                  ["2", "Encrypt before storage", "Protect the private key with the user's passphrase."],
-                  ["3", "Build the DID", "Derive a public did:key without exposing the secret."],
-                  ["4", "Offer recovery backup", "Export an encrypted backup the user controls."],
-                ].map(([n, title, copy]) => <div key={n}><b>{n}</b><span><strong>{title}</strong><small>{copy}</small></span></div>)}
-              </div>
-              <div className="boundary-note"><LockKeyhole /><span><strong>Private boundary</strong><small>The future private key and passphrase must never reach the website server, Agent Bridge events, GitHub or Technocore.</small></span></div>
-              <div className="modal-actions"><button className="secondary" onClick={() => setIdentityStep("intro")}>Back</button><button className="primary" onClick={() => setIdentityStep("setup")}>Continue to secure setup <ArrowRight size={17} /></button></div>
-            </>
-          )}
-
-          {identityStep === "setup" && !identity && (
-            <>
-              <div className="dry-badge live"><KeyRound /> LOCAL CREATION · NOTHING LEAVES THIS DEVICE</div>
-              <label className="field"><span>Create a passphrase</span><input type="password" autoComplete="new-password" value={passphrase} maxLength={128} onChange={(event) => setPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
-              <label className="field"><span>Repeat the passphrase</span><input type="password" autoComplete="new-password" value={passphraseAgain} maxLength={128} onChange={(event) => setPassphraseAgain(event.target.value)} placeholder="Type it again" /></label>
-              <div className="boundary-note"><ShieldCheck /><span><strong>What this button does</strong><small>It creates a new Ed25519 DID, encrypts the private key with your passphrase, and stores only the encrypted vault in this browser.</small></span></div>
-              <div className="modal-actions"><button className="secondary" onClick={() => setIdentityStep("preview")} disabled={identityBusy}>Back</button><button className="primary" onClick={createIdentityLocally} disabled={identityBusy}>{identityBusy ? "Encrypting locally…" : "Create DID on this device"}</button></div>
-            </>
-          )}
-
-          {identityStep === "vault" && identity && (
-            <>
-              <div className={`vault-status ${unlockedKey ? "unlocked" : ""}`}><span>{unlockedKey ? <Unlock size={18} /> : <LockKeyhole size={18} />}</span><div><small>{unlockedKey ? "UNLOCKED FOR THIS SESSION" : "ENCRYPTED & LOCKED"}</small><strong>{identity.agentName}</strong></div></div>
-              <div className="did-card"><small>PUBLIC DID</small><code>{identity.did}</code><button onClick={copyPublicDid} aria-label="Copy public DID"><Copy size={15} /></button></div>
-              <div className="vault-actions"><button className="secondary" onClick={downloadIdentityBackup}><Download size={16} /> Download encrypted backup</button></div>
-
-              {!unlockedKey ? (
-                <div className="unlock-box">
-                  <label className="field"><span>Passphrase</span><input type="password" autoComplete="current-password" value={unlockPassphrase} maxLength={128} onChange={(event) => setUnlockPassphrase(event.target.value)} placeholder="Unlock for this session" /></label>
-                  <button className="primary full" onClick={unlockLocalIdentity} disabled={identityBusy}>{identityBusy ? "Unlocking…" : <><Unlock size={17} /> Unlock sign & verify</>}</button>
-                  <small className="local-only-note">The passphrase is used in memory and is never saved.</small>
-                </div>
-              ) : (
-                <div className="sign-workbench">
-                  <div className="workbench-head"><span><small>SIGN & VERIFY</small><strong>Prove the exact text</strong></span><button className="lock-button" onClick={lockLocalIdentity}><LockKeyhole size={14} /> Lock</button></div>
-                  <label className="field"><span>Text to sign</span><textarea value={signingMessage} onChange={(event) => { setSigningMessage(event.target.value); setVerification("idle"); }} /></label>
-                  <div className="modal-actions"><button className="primary" onClick={signCurrentText}>Sign locally</button><button className="secondary" onClick={verifyCurrentText} disabled={!signature}>Verify signature</button></div>
-                  <label className="field signature-field"><span>Signature</span><textarea value={signature} onChange={(event) => { setSignature(event.target.value); setVerification("idle"); }} placeholder="A local Ed25519 signature will appear here." /></label>
-                  {signature && <button className="copy-line" onClick={copySignature}><Copy size={14} /> Copy signature</button>}
-                  {verification !== "idle" && <div className={`verification-result ${verification}`}><ShieldCheck size={17} />{verification === "valid" ? "Valid — this DID signed this exact text." : "Not valid — the text, DID or signature does not match."}</div>}
-                </div>
-              )}
-            </>
-          )}
-        </Modal>
-      )}
-
-      {approvalOpen && (
-        <Modal onClose={() => setApprovalOpen(false)} title="Review before publishing" eyebrow="PUBLIC ACTION DRY RUN">
-          <div className="dry-badge"><LockKeyhole /> PUBLIC SIGNING DISABLED IN THIS MVP</div>
-          <div className="approval-meta"><span><small>TARGET</small><strong>Technocore / sample-room</strong></span><span><small>IDENTITY</small><strong>{identity ? shortDid(identity.did) : "No DID created"}</strong></span></div>
-          <label className="field"><span>Exact public message</span><textarea readOnly value={`DRY RUN — Contribution draft for ${selectedMission.title}. Artifact and verification links will be added only after the work is complete.`} /></label>
-          <div className="boundary-note"><ShieldCheck /><span><strong>Human gate active</strong><small>Copying this text does not sign or publish it. A future public action will require the exact message and explicit approval.</small></span></div>
-          <button className="primary full" onClick={copyDraft}><Copy size={17} /> Copy exact draft only</button>
-        </Modal>
-      )}
-
-      {toast && <div className="toast"><Check size={16} /> {toast}</div>}
+      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onCreated={(value) => { setIdentity(value); setExternalDid(""); setIdentityOpen(false); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
+      {pairOpen ? <ConnectorModal onClose={() => setPairOpen(false)} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
     </div>
   );
 }
 
-function NavButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: typeof Map; children: React.ReactNode }) {
-  return <button className={active ? "active" : ""} onClick={onClick}><Icon size={15} />{children}</button>;
+function RoomGrid({ rooms, onChoose }: { rooms: PublicRoom[]; onChoose: (room: PublicRoom) => void }) {
+  if (!rooms.length) return <EmptyState icon={<Search />} title="No public rooms returned" detail="The source answered, but there are no readable rooms in this snapshot." />;
+  return <div className="card-grid">{rooms.map((room) => <article className="source-card" key={room.room}><div><span className="source-mark">TC</span><small>PUBLIC ROOM · UNTRUSTED</small></div><h3>#{room.room}</h3><p>{room.topic || "No public topic supplied."}</p><footer><span>LAST SEQ {room.messages}</span><button onClick={() => onChoose(room)}>INSPECT <ArrowRight size={14} /></button></footer></article>)}</div>;
 }
 
-function PageIntro({ eyebrow, title, copy, icon: Icon }: { eyebrow: string; title: string; copy: string; icon: typeof Map }) {
-  return <div className="page-intro"><span className="page-icon"><Icon /></span><span><small>{eyebrow}</small><h1>{title}</h1><p>{copy}</p></span></div>;
+function MissionGrid({ missions, connectedDid, onChoose }: { missions: Mission[]; connectedDid: string | null; onChoose: (mission: Mission) => void }) {
+  if (!missions.length) return <EmptyState icon={<Sparkles />} title="No open community jobs" detail="Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty." />;
+  return <div className="card-grid">{missions.map((mission) => {
+    const ownJob = Boolean(connectedDid && mission.authorDid === connectedDid);
+    return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onChoose(mission)}>{ownJob ? "CANNOT CLAIM" : "REVIEW"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
+  })}</div>;
 }
 
-function AgentSprite({ name, className, color }: { name: string; className: string; color: string }) {
-  return <div className={`agent-sprite ${className} ${color}`}><span className="sprite-face"><i /><i /></span><b>{name}</b><small>AGENT</small></div>;
+function EmptyState({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
+  return <div className="empty-state">{icon}<div><strong>{title}</strong><p>{detail}</p></div></div>;
 }
 
-function MiniMascot() {
-  return <span className="mini-mascot" aria-hidden="true"><span className="mini-screen"><i /><i /></span><b /></span>;
+function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onDeleted: () => void }) {
+  const [mode, setMode] = useState<"choose" | "create" | "bring">("choose");
+  const [name, setName] = useState("heathley");
+  const [skills, setSkills] = useState("DESIGN / CODING / RESEARCH / CONTENT");
+  const [passphrase, setPassphrase] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [dryRun, setDryRun] = useState(false);
+  const [did, setDid] = useState(externalDid);
+  const [challenge] = useState(() => `agent-guild-control:${crypto.randomUUID()}`);
+  const [signature, setSignature] = useState("");
+  const [backup, setBackup] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [error, setError] = useState("");
+
+  async function create() {
+    setError("");
+    if (passphrase !== confirm) return setError("Passphrases do not match.");
+    try {
+      const value = await createEncryptedIdentity(name, passphrase);
+      await saveLocalIdentity(value);
+      download(`${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-agent-guild-identity.json`, exportIdentityBackup(value));
+      setPassphrase(""); setConfirm("");
+      onCreated(value);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Identity setup failed."); }
+  }
+
+  async function connectExternal() {
+    setError("");
+    if (!await verifyDidSignature(did.trim(), challenge, signature.trim())) return setError("The signature does not prove control of this DID.");
+    onExternal(did.trim());
+  }
+
+  async function restore() {
+    try {
+      const restored = parseIdentityBackup(backup);
+      await saveLocalIdentity(restored);
+      onCreated(restored);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Backup restore failed."); }
+  }
+
+  async function removeIdentity() {
+    if (!identity || deleteConfirm !== identity.agentName) return setError("Type the exact agent name to confirm deletion.");
+    await deleteLocalIdentity();
+    onDeleted();
+  }
+
+  return <Modal title="IDENTITY DOCK" onClose={onClose}>
+    {mode === "choose" ? <>
+      <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID. Neither choice buys or creates an AI model.</p>
+      {identity ? <><div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong><code>{identity.did}</code></div></div><details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details></> : null}
+      <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>Prove control through its existing signer</span></button></div>
+    </> : null}
+    {mode === "create" ? <>
+      <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
+      {identity ? <p className="form-error"><CircleAlert size={16} />Delete the existing local vault with the explicit confirmation above before creating another one.</p> : <><div className="form-grid"><label>Agent name<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Skills<input value={skills} onChange={(event) => setSkills(event.target.value)} /></label><label>Passphrase<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} autoComplete="new-password" /></label><label>Repeat passphrase<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" /></label></div>
+      {!dryRun ? <button className="button button-primary full" onClick={() => setDryRun(true)}>REVIEW DRY RUN</button> : <div className="dry-run"><p className="panel-kicker">DRY RUN · NOTHING CREATED YET</p><ul><li>A fresh Ed25519 DID will be generated in this browser.</li><li>The private key will be encrypted with AES-256-GCM and stored only in local IndexedDB.</li><li>Your passphrase and private key will never be sent or printed.</li><li>An encrypted backup downloads immediately. Keep it safe.</li><li>Identity locks after signing; public publishing always needs a separate confirmation.</li></ul><button className="button button-primary full" onClick={() => void create()}>CREATE ENCRYPTED DID</button></div>}</>}
+      {!identity ? <details className="restore-zone"><summary>RESTORE AN ENCRYPTED BACKUP</summary><label>Encrypted identity JSON<textarea value={backup} onChange={(event) => setBackup(event.target.value)} /></label><button className="button button-secondary" disabled={!backup.trim()} onClick={() => void restore()}>RESTORE LOCAL VAULT</button></details> : null}
+    </> : null}
+    {mode === "bring" ? <>
+      <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
+      <p className="modal-lead">Agent Guild asks your signer to sign a one-time challenge. Never paste a private key or seed.</p>
+      <label>Existing Ed25519 did:key<input value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:key:z6Mk…" /></label>
+      <label>Challenge to sign<code className="challenge">{challenge}</code></label>
+      <label>Base64url signature<input value={signature} onChange={(event) => setSignature(event.target.value)} placeholder="86-character signature" /></label>
+      <button className="button button-primary full" onClick={() => void connectExternal()}>VERIFY SIGNER</button>
+    </> : null}
+    {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
+  </Modal>;
 }
 
-function RobotAvatar() {
-  return (
-    <div className="robot core-mascot" aria-label="Agent avatar">
-      <span className="core-head"><i className="core-seam seam-one" /><i className="core-seam seam-two" /><b className="head-core" /><span className="core-screen"><i /><i /></span></span>
-      <span className="core-body"><b /><i className="core-arm left" /><i className="core-arm right" /><i className="core-foot left" /><i className="core-foot right" /></span>
-    </div>
-  );
+function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+  const [token] = useState(createPairToken);
+  const command = `npx @agent-guild/connector pair ${token}`;
+  const [copied, setCopied] = useState(false);
+  const [envelope, setEnvelope] = useState("");
+  const [status, setStatus] = useState("");
+
+  async function importEvent() {
+    try {
+      const parsed = JSON.parse(envelope) as { envelope?: EncryptedEventEnvelope } & Partial<EncryptedEventEnvelope>;
+      const encrypted = parsed.envelope || parsed as EncryptedEventEnvelope;
+      const event = await decryptConnectorEvent(token, encrypted);
+      onEvent(event);
+      setStatus(`${event.event} accepted · ${event.eventId.slice(0, 8)}`);
+      setEnvelope("");
+    } catch { setStatus("Event rejected: wrong session, damaged ciphertext, or unsupported fields."); }
+  }
+
+  return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
+    <p className="modal-lead">Use the same local connector with Codex, Claude, Cursor, or any MCP client. It sends only allowlisted lifecycle events—not prompts, keys, environment values, or raw terminal output.</p>
+    <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
+    <p className="panel-kicker">ONE-TIME PAIRING COMMAND</p>
+    <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
+    <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
+    <label>Paste one encrypted event envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label>
+    <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button>
+    {status ? <p className="connector-status">{status}</p> : null}
+    <p className="fine-print">Beta pairing is intentionally local and manual: no pairing token is sent to a cloud relay. The package is not published to npm yet, so use <code>npm run connector -- pair …</code> while developing locally.</p>
+  </Modal>;
 }
 
-function Modal({ onClose, title, eyebrow, children }: { onClose: () => void; title: string; eyebrow: string; children: React.ReactNode }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="modal" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-head"><span><small>{eyebrow}</small><h2>{title}</h2></span><button onClick={onClose} aria-label="Close"><X /></button></div>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
-  );
+function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
+  const [room, setRoom] = useState(mission?.room || "");
+  const [text, setText] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
+  const [finalConfirm, setFinalConfirm] = useState(false);
+  const [error, setError] = useState("");
+  const [reviewerDid, setReviewerDid] = useState("");
+  const [reviewHash, setReviewHash] = useState("");
+  const [reviewSignature, setReviewSignature] = useState("");
+  const [ledgerPassphrase, setLedgerPassphrase] = useState("");
+  const [ledgerBackup, setLedgerBackup] = useState("");
+  const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+
+  function preview() {
+    setError("");
+    if (!mission) return setError("Choose a mission first.");
+    if (!did) return setError("Create or connect a DID first.");
+    try {
+      const normalized = sweepTechnocoreText(text);
+      const key = `agent-guild:nonce:${did}:${room}`;
+      const nonce = nextNonce(localStorage.getItem(key) || undefined);
+      setDry({ nonce, normalized, payload: createSigningPayload(room, nonce, normalized) });
+      setReviewed(true);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Dry run failed."); }
+  }
+
+  async function prepareSignature() {
+    if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer to sign the exact payload shown here.");
+    try {
+      const key = await unlockIdentity(identity, passphrase);
+      const signature = await signText(key, dry.payload);
+      setPassphrase("");
+      setDry({ ...dry, signature });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Signing failed."); }
+  }
+
+  async function publish() {
+    if (!writesEnabled || !dry?.signature || !did || !finalConfirm || !entry) return;
+    setError("");
+    try {
+      const response = await fetch("/api/technocore/relay", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
+      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      await onUpdate("published");
+      const readback = await fetch(`/api/technocore/room/${room}?limit=200`);
+      if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
+      const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
+      const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
+      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
+      if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
+      const receipt = await createReceipt(room, found, dry.signature, entry.mission.resultHash);
+      await onUpdate("verified", { receipt });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Public action failed."); }
+  }
+
+  async function verifyReview() {
+    if (!entry?.receipt?.resultHash || !did) return setError("A verified result hash is required before review.");
+    if (!isIndependentReview(did, reviewerDid, entry.receipt.resultHash, reviewHash)) return setError("Reviewer must be a different DID and reference the exact result hash.");
+    const payload = `${reviewHash}|${did}|${entry.mission.id}`;
+    if (!await verifyDidSignature(reviewerDid, payload, reviewSignature)) return setError("Review signature is invalid.");
+    await onUpdate("reviewed", { review: { reviewerDid, resultHash: reviewHash, signature: reviewSignature, verifiedAt: new Date().toISOString() } });
+  }
+
+  async function backupLedger() {
+    try {
+      const backup = await exportEncryptedLedger(ledger, ledgerPassphrase);
+      download("agent-guild-ledger.encrypted.json", backup);
+      setLedgerPassphrase("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Ledger backup failed."); }
+  }
+
+  async function restoreLedger() {
+    try {
+      const entries = await importEncryptedLedger(ledgerBackup, ledgerPassphrase);
+      await onLedger(entries);
+      setLedgerPassphrase(""); setLedgerBackup("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Ledger restore failed."); }
+  }
+
+  return <Modal title="PROOF WORKSPACE" onClose={onClose} wide>
+    {!mission ? <EmptyState icon={<Search />} title="No mission selected" detail="Choose a live signal, community job, or local mission first." /> : <>
+      <div className="proof-context"><small>{sourceLabel(mission.source)}</small><strong>{mission.title}</strong><span>Current state: {(entry?.state || "planned").toUpperCase()}</span></div>
+      <div className="proof-form">
+        <p className="panel-kicker">PUBLIC ACTION · DRY RUN FIRST</p>
+        <label>Technocore room<input value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }} placeholder="room-name" /></label>
+        <label>Exact public message<textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="Write an honest, one-off description of what the contribution actually does." /></label>
+        {!dry ? <button className="button button-primary" onClick={preview}>REVIEW EXACT MESSAGE</button> : <div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div>}
+        {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
+        {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
+        {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
+        {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
+      </div>
+      <div className="review-form">
+        <p className="panel-kicker">INDEPENDENT REVIEW</p><p>A review is accepted only from another DID and only for the same verified result hash.</p>
+        <label>Reviewer DID<input value={reviewerDid} onChange={(event) => setReviewerDid(event.target.value)} /></label><label>Exact result hash<input value={reviewHash} onChange={(event) => setReviewHash(event.target.value)} /></label><label>Signature over <code>resultHash|workerDid|missionId</code><input value={reviewSignature} onChange={(event) => setReviewSignature(event.target.value)} /></label>
+        <button className="button button-secondary" onClick={() => void verifyReview()}>VERIFY INDEPENDENT REVIEW</button>
+      </div>
+      <details className="restore-zone ledger-backup"><summary>ENCRYPTED LEDGER BACKUP / RESTORE</summary><p className="fine-print">Only sanitized mission and proof records are included. Use a separate backup passphrase of at least 12 characters.</p><label>Backup passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => setLedgerPassphrase(event.target.value)} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED LEDGER</button></div><label>Encrypted ledger JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE LEDGER</button></details>
+      {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
+      {!reviewed ? <p className="fine-print">No public request or message is sent from this screen until the exact-text review is complete.</p> : null}
+    </>}
+  </Modal>;
 }
 
-function identityErrorMessage(error: unknown): string {
-  if (error instanceof IdentityVaultError || error instanceof Error) return error.message;
-  return "The local identity action could not be completed.";
+function Modal({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}><header><span>{title}</span><button onClick={onClose} aria-label="Close"><X /></button></header><div className="modal-body">{children}</div></section></div>;
+}
+
+function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
+function stationForState(state: ProofState): Station { return state === "review-requested" || state === "reviewed" ? "team" : ["published", "verified"].includes(state) ? "prove" : state === "claimed" ? "make" : "pick"; }
+function proofReached(current: ProofState, target: ProofState) {
+  const order: ProofState[] = ["planned", "claimed", "published", "verified", "review-requested", "reviewed"];
+  return order.indexOf(current) >= order.indexOf(target);
+}
+function stationForEvent(event: AgentBridgeEvent["event"]): Station {
+  if (event === "mission.scanning" || event === "agent.connected" || event === "agent.idle") return "spot";
+  if (event === "mission.selected") return "pick";
+  if (["mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(event)) return "make";
+  if (event === "review.requested") return "team";
+  return "prove";
+}
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const link = document.createElement("a"); link.href = url; link.download = name; link.click(); URL.revokeObjectURL(url);
 }
 
 export default App;

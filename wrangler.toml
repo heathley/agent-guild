@@ -1,0 +1,9 @@
+name = "agent-guild-edge"
+main = "worker/index.js"
+compatibility_date = "2026-08-01"
+
+[vars]
+PUBLIC_WRITES = "false"
+# APP_ORIGIN is intentionally unset until a reviewed deployment exists.
+# EXPECTED_CONFIG_SHA256, EXPECTED_OPENAPI_SHA256, and EXPECTED_LLMS_SHA256
+# are also intentionally unset. Writes fail closed until all three are reviewed.
