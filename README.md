@@ -13,7 +13,8 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 - Independent review validation: a different DID must sign the same result hash.
 - A model-neutral MCP connector with eight narrow lifecycle tools and no general message-posting tool.
 - Strict allowlisted bridge events. Raw prompts, environment values, tokens, seeds, and terminal logs are not accepted.
-- Encrypted local connector envelopes that can be manually imported into the workspace during beta.
+- A 24-hour encrypted pairing session: AES-GCM event encryption, P-256 request authentication, replay protection, and an edge relay that never receives the encryption or signing private key.
+- Manual encrypted-envelope fallback when the local preview is running without the edge Worker.
 - Cloudflare Worker with fixed Technocore/Kibble targets and public writes disabled by default.
 - FLOP `design.md` colors, Space Mono/Inter typography, reduced-motion support, and a replaceable temporary V3 mascot raster.
 
@@ -36,10 +37,32 @@ npm run check
 
 ## MCP connector
 
-The website generates a one-time pairing token. During local development, run:
+The website downloads a one-time `agent-guild-pairing.json` file. It contains temporary session secrets, expires in 24 hours, and is ignored by Git. Keep it local and delete it after pairing. During local development, run:
 
 ```bash
-npm run connector -- pair <token>
+npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json
+```
+
+The command contains no secret. On a deployed preview, encrypted lifecycle events arrive automatically. On the Vite-only local preview, the connector returns an encrypted fallback envelope that can be pasted into the connector panel.
+
+Codex supports project-scoped STDIO MCP servers. In a trusted checkout, add this to `.codex/config.toml`, replacing the two absolute paths:
+
+```toml
+[mcp_servers.agent_guild]
+command = "npm"
+args = ["run", "connector", "--", "pair-file", "/absolute/path/to/agent-guild-pairing.json"]
+cwd = "/absolute/path/to/Flop-Friend"
+enabled_tools = [
+  "guild_status",
+  "guild_scan_work",
+  "guild_propose_mission",
+  "guild_start_run",
+  "guild_report_progress",
+  "guild_attach_evidence",
+  "guild_request_public_action",
+  "guild_request_review",
+]
+default_tools_approval_mode = "writes"
 ```
 
 The connector exposes:
@@ -55,6 +78,8 @@ The connector exposes:
 
 `guild_request_public_action` only creates an `approval.requested` event. It cannot publish a message.
 
+The connector was acceptance-tested through an ephemeral Codex CLI session: Codex started the STDIO server and successfully called `guild_status`. The generic MCP smoke client also confirms the same eight-tool contract and the absence of `post_message`.
+
 ## Edge boundary
 
 `worker/index.js` can read only these upstreams:
@@ -63,6 +88,12 @@ The connector exposes:
 - `https://flop-kibble.onrender.com`
 
 There is no arbitrary URL proxy. `PUBLIC_WRITES` is `false` in `wrangler.toml`; the signed relay remains unavailable until a reviewed staging deployment explicitly enables it and configures an exact `APP_ORIGIN`.
+
+The pairing relay uses a Cloudflare Durable Object. The browser registers only a P-256 public key. Browser and connector requests are signed, timestamped, nonce-protected, and scoped to one opaque session. The Durable Object stores up to 100 ciphertext envelopes, expires after 24 hours, and cannot decrypt lifecycle events.
+
+The public UI is built for Cloudflare Pages. Set `VITE_EDGE_ORIGIN` to the separately deployed Worker origin during the Pages build. The Worker must set `APP_ORIGIN` to the exact Pages preview origin; it does not accept an arbitrary origin.
+
+`protocol-lock.json` records the exact reviewed SHA-256 values, byte sizes, and observed Technocore version. Deployment variables must be copied from a fresh review of that file; the Worker still performs a live hash comparison before every public write.
 
 Even when enabled, the browser requires this sequence:
 
@@ -91,10 +122,9 @@ The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temp
 
 ## Status and remaining beta work
 
-The local vertical slice is implemented and tested. Before a public beta:
+The local vertical slice, authenticated encrypted connector relay, and Codex acceptance test are implemented. Before a public beta:
 
-- provision Cloudflare preview resources and verify protocol hashes in staging;
-- replace manual encrypted connector-envelope import with a reviewed authenticated relay design;
-- complete a hands-on Codex client acceptance test (the generic MCP smoke client already passes);
+- provision the Cloudflare Worker Durable Object and Pages preview resources;
+- set the exact Pages/Worker origins and verify the three Technocore protocol hashes in staging;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before deployment, Git push, or any public message.

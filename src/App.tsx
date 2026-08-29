@@ -5,9 +5,14 @@ import {
   Sparkles, Users, X,
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
-import { decryptConnectorEvent, createPairToken, type EncryptedEventEnvelope } from "./bridge/pairing";
+import {
+  createPairToken, createRelayPairing, decryptConnectorEvent, decryptRelayedEvent,
+  exportRelayPairing, pollRelayEvents, registerRelayPairing,
+  type EncryptedEventEnvelope, type RelayPairingFile,
+} from "./bridge/pairing";
 import type { AgentBridgeEvent } from "./bridge/contract";
 import { fetchSources, roomToMission, type PublicRoom, type SourceSnapshot } from "./data/api";
+import { edgeOrigin, edgeUrl } from "./data/edge";
 import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
   createEncryptedIdentity, exportIdentityBackup, parseIdentityBackup, shortDid, signText,
@@ -331,16 +336,56 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
 
 function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [token] = useState(createPairToken);
-  const command = `npx @agent-guild/connector pair ${token}`;
+  const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
+  const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">("preparing");
+  const cursor = useRef(0);
+  const command = "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
   const [copied, setCopied] = useState(false);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void createRelayPairing(edgeOrigin()).then(async (created) => {
+      if (cancelled) return;
+      setPairing(created);
+      try {
+        await registerRelayPairing(created);
+        if (!cancelled) setRelayState("ready");
+      } catch {
+        if (!cancelled) setRelayState("manual");
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!pairing || relayState !== "ready") return;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const events = await pollRelayEvents(pairing, cursor.current);
+        for (const item of events) {
+          const event = await decryptRelayedEvent(pairing, item.envelope);
+          if (stopped) return;
+          onEvent(event);
+          cursor.current = Math.max(cursor.current, item.seq);
+          setStatus(`${event.event} received securely · ${event.eventId.slice(0, 8)}`);
+        }
+      } catch {
+        if (!stopped) setRelayState("manual");
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), 2500);
+    return () => { stopped = true; window.clearInterval(interval); };
+  }, [onEvent, pairing, relayState]);
 
   async function importEvent() {
     try {
       const parsed = JSON.parse(envelope) as { envelope?: EncryptedEventEnvelope } & Partial<EncryptedEventEnvelope>;
       const encrypted = parsed.envelope || parsed as EncryptedEventEnvelope;
-      const event = await decryptConnectorEvent(token, encrypted);
+      const event = pairing ? await decryptRelayedEvent(pairing, encrypted) : await decryptConnectorEvent(token, encrypted);
       onEvent(event);
       setStatus(`${event.event} accepted · ${event.eventId.slice(0, 8)}`);
       setEnvelope("");
@@ -350,13 +395,17 @@ function ConnectorModal({ onClose, onEvent }: { onClose: () => void; onEvent: (e
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
     <p className="modal-lead">Use the same local connector with Codex, Claude, Cursor, or any MCP client. It sends only allowlisted lifecycle events—not prompts, keys, environment values, or raw terminal output.</p>
     <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
-    <p className="panel-kicker">ONE-TIME PAIRING COMMAND</p>
+    <p className="panel-kicker">ONE-TIME ENCRYPTED PAIRING FILE</p>
+    <p className="fine-print">The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events. Keep the file local and delete it after pairing.</p>
+    <button className="button button-primary full" disabled={!pairing} onClick={() => pairing && download("agent-guild-pairing.json", exportRelayPairing(pairing))}>DOWNLOAD PAIRING FILE</button>
+    <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>
     <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
-    <label>Paste one encrypted event envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label>
-    <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button>
+    <div className="connector-status">{relayState === "preparing" ? "Preparing secure session…" : relayState === "ready" ? "Secure relay ready. Events arrive automatically." : "Local preview has no edge relay. Paste the encrypted fallback envelope below."}</div>
+    {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
+    {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">Beta pairing is intentionally local and manual: no pairing token is sent to a cloud relay. The package is not published to npm yet, so use <code>npm run connector -- pair …</code> while developing locally.</p>
+    <p className="fine-print">The package is not published to npm yet, so the command runs this repository's local connector. No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
   </Modal>;
 }
 
@@ -402,10 +451,10 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
     if (!writesEnabled || !dry?.signature || !did || !finalConfirm || !entry) return;
     setError("");
     try {
-      const response = await fetch("/api/technocore/relay", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
+      const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
       if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
       await onUpdate("published");
-      const readback = await fetch(`/api/technocore/room/${room}?limit=200`);
+      const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
       if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
       const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
       const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });

@@ -4,6 +4,7 @@ const ROOM = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const DID = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 const NONCE = /^[0-9]{1,19}$/;
 const SIG = /^[A-Za-z0-9_-]{86}$/;
+const PAIRING_SESSION = /^[A-Za-z0-9_-]{32}$/;
 
 export default {
   fetch(request, env, ctx) {
@@ -47,6 +48,29 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return await readJson(`${KIBBLE}/api/status`, request, env, ctx, 20);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/pairing/session") {
+      assertPairingOrigin(request, env);
+      if (!env.PAIRING_SESSIONS) throw new Error("Encrypted pairing relay is not configured.");
+      const registration = validatePairingRegistration(await readSmallJson(request, 6_000));
+      const id = env.PAIRING_SESSIONS.idFromName(registration.sessionId);
+      const response = await env.PAIRING_SESSIONS.get(id).fetch(new Request("https://pairing.internal/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(registration),
+      }));
+      return withPrivateCors(response, request, env);
+    }
+
+    const pairingMatch = url.pathname.match(/^\/api\/pairing\/([^/]+)\/events$/);
+    if ((request.method === "GET" || request.method === "POST") && pairingMatch) {
+      const sessionId = decodeURIComponent(pairingMatch[1]);
+      if (!PAIRING_SESSION.test(sessionId)) return json({ error: "Invalid pairing session." }, 400, request, env);
+      if (!env.PAIRING_SESSIONS) throw new Error("Encrypted pairing relay is not configured.");
+      const id = env.PAIRING_SESSIONS.idFromName(sessionId);
+      const response = await env.PAIRING_SESSIONS.get(id).fetch(request);
+      return withPrivateCors(response, request, env);
+    }
+
     if (request.method === "POST" && url.pathname === "/api/technocore/relay") {
       if (env.PUBLIC_WRITES !== "true") {
         return json({ error: "Public writes are disabled on this deployment." }, 403, request, env);
@@ -87,6 +111,19 @@ export function validateRelay(input) {
   return input;
 }
 
+export function validatePairingRegistration(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Pairing registration must be an object.");
+  if (Object.keys(input).sort().join(",") !== "expiresAt,publicKey,sessionId,version") throw new Error("Pairing registration contains unsupported fields.");
+  if (input.version !== 2 || !PAIRING_SESSION.test(input.sessionId)) throw new Error("Invalid pairing session.");
+  const expiresAt = Date.parse(input.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 86_700_000) throw new Error("Invalid pairing expiry.");
+  const key = input.publicKey;
+  if (!key || typeof key !== "object" || key.kty !== "EC" || key.crv !== "P-256" || key.d !== undefined ||
+      typeof key.x !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(key.x) ||
+      typeof key.y !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(key.y)) throw new Error("Invalid pairing public key.");
+  return { version: 2, sessionId: input.sessionId, publicKey: { kty: "EC", crv: "P-256", x: key.x, y: key.y }, expiresAt: new Date(expiresAt).toISOString() };
+}
+
 function sweep(value) {
   return value.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, " ").trim();
 }
@@ -112,6 +149,11 @@ async function readJson(target, request, env, ctx, ttl) {
 function assertWriteOrigin(request, env) {
   if (!env.APP_ORIGIN) throw new Error("Write origin is not configured.");
   if (request.headers.get("origin") !== env.APP_ORIGIN) throw new Error("Write origin is not allowed.");
+}
+
+function assertPairingOrigin(request, env) {
+  if (!env.APP_ORIGIN) throw new Error("App origin is not configured.");
+  if (request.headers.get("origin") !== env.APP_ORIGIN) throw new Error("Pairing origin is not allowed.");
 }
 
 async function readSmallJson(request, max) {
@@ -140,7 +182,18 @@ function withCors(response, request, env) {
   if (request.method === "GET") headers.set("access-control-allow-origin", "*");
   else if (origin && origin === env.APP_ORIGIN) headers.set("access-control-allow-origin", origin);
   headers.set("access-control-allow-methods", "GET,POST,OPTIONS");
-  headers.set("access-control-allow-headers", "content-type");
+  headers.set("access-control-allow-headers", "content-type,x-ag-timestamp,x-ag-nonce,x-ag-signature");
+  headers.set("vary", "Origin");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function withPrivateCors(response, request, env) {
+  const headers = new Headers(response.headers);
+  const origin = request.headers.get("origin");
+  if (origin && origin === env.APP_ORIGIN) headers.set("access-control-allow-origin", origin);
+  headers.set("access-control-allow-methods", "GET,POST,OPTIONS");
+  headers.set("access-control-allow-headers", "content-type,x-ag-timestamp,x-ag-nonce,x-ag-signature");
+  headers.set("cache-control", "no-store");
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -165,4 +218,103 @@ function expectedHash(env, path) {
   if (path === "/openapi.json") return env.EXPECTED_OPENAPI_SHA256 || "";
   if (path === "/llms.txt") return env.EXPECTED_LLMS_SHA256 || "";
   return "";
+}
+
+export class PairingSession {
+  constructor(state) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    try {
+      const url = new URL(request.url);
+      if (request.method === "POST" && url.pathname === "/register") {
+        const registration = validatePairingRegistration(await readSmallJson(request, 6_000));
+        const existing = await this.state.storage.get("registration");
+        if (existing && JSON.stringify(existing) !== JSON.stringify(registration)) {
+          return pairingJson({ error: "Pairing session is already registered." }, 409);
+        }
+        if (!existing) {
+          await this.state.storage.put("registration", registration);
+          await this.state.storage.put("events", []);
+          await this.state.storage.setAlarm(Date.parse(registration.expiresAt));
+        }
+        return pairingJson({ registered: true, expiresAt: registration.expiresAt }, existing ? 200 : 201);
+      }
+
+      const registration = await this.state.storage.get("registration");
+      if (!registration || Date.parse(registration.expiresAt) <= Date.now()) return pairingJson({ error: "Pairing session expired or was not registered." }, 410);
+      const body = request.method === "POST" ? await request.clone().text() : "";
+      if (new TextEncoder().encode(body).length > 32_000) return pairingJson({ error: "Encrypted event is too large." }, 413);
+      const authError = await verifyPairingAuth(request, registration.publicKey, body, this.state.storage);
+      if (authError) return pairingJson({ error: authError }, 401);
+
+      if (request.method === "GET" && url.pathname.endsWith("/events")) {
+        const after = clampInt(url.searchParams.get("after"), 0, Number.MAX_SAFE_INTEGER, 0);
+        const events = (await this.state.storage.get("events")) || [];
+        return pairingJson({ events: events.filter((item) => item.seq > after) }, 200);
+      }
+
+      if (request.method === "POST" && url.pathname.endsWith("/events")) {
+        const event = validateEncryptedEvent(JSON.parse(body));
+        const events = (await this.state.storage.get("events")) || [];
+        const duplicate = events.find((item) => item.envelope.eventId === event.envelope.eventId);
+        if (duplicate) return pairingJson({ accepted: true, seq: duplicate.seq, duplicate: true }, 200);
+        const seq = (events.at(-1)?.seq || 0) + 1;
+        const next = [...events, { seq, envelope: event.envelope }].slice(-100);
+        await this.state.storage.put("events", next);
+        return pairingJson({ accepted: true, seq }, 201);
+      }
+
+      return pairingJson({ error: "Not found." }, 404);
+    } catch (error) {
+      return pairingJson({ error: error instanceof Error ? error.message : "Pairing request failed." }, 400);
+    }
+  }
+
+  async alarm() {
+    await this.state.storage.deleteAll();
+  }
+}
+
+function validateEncryptedEvent(input) {
+  if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "envelope,eventId") throw new Error("Encrypted event contains unsupported fields.");
+  const envelope = input.envelope;
+  if (!envelope || typeof envelope !== "object" || Object.keys(envelope).sort().join(",") !== "ciphertext,eventId,iv,version") throw new Error("Encrypted envelope contains unsupported fields.");
+  if (input.eventId !== envelope.eventId || typeof input.eventId !== "string" || !/^[A-Za-z0-9_-]{8,96}$/.test(input.eventId)) throw new Error("Invalid encrypted event id.");
+  if (envelope.version !== 1 || typeof envelope.iv !== "string" || !/^[A-Za-z0-9_-]{16}$/.test(envelope.iv)) throw new Error("Invalid encrypted event IV.");
+  if (typeof envelope.ciphertext !== "string" || envelope.ciphertext.length < 20 || envelope.ciphertext.length > 24_000 || !/^[A-Za-z0-9_-]+$/.test(envelope.ciphertext)) throw new Error("Invalid encrypted event ciphertext.");
+  return { eventId: input.eventId, envelope: { version: 1, eventId: input.eventId, iv: envelope.iv, ciphertext: envelope.ciphertext } };
+}
+
+async function verifyPairingAuth(request, publicKey, body, storage) {
+  const timestamp = request.headers.get("x-ag-timestamp") || "";
+  const nonce = request.headers.get("x-ag-nonce") || "";
+  const signature = request.headers.get("x-ag-signature") || "";
+  if (!/^\d{10}$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 90) return "Pairing request timestamp is invalid.";
+  if (!/^[A-Za-z0-9_-]{24}$/.test(nonce) || !/^[A-Za-z0-9_-]{86}$/.test(signature)) return "Pairing request authentication is malformed.";
+  const recent = ((await storage.get("recentNonces")) || []).filter((item) => item.at > Date.now() - 300_000);
+  if (recent.some((item) => item.nonce === nonce)) return "Pairing request was already used.";
+  const url = new URL(request.url);
+  const canonical = `${request.method}\n${url.pathname}${url.search}\n${timestamp}\n${nonce}\n${await sha256(body)}`;
+  const key = await crypto.subtle.importKey("jwk", publicKey, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+  const valid = await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    decodeBase64Url(signature),
+    new TextEncoder().encode(canonical),
+  );
+  if (!valid) return "Pairing request signature is invalid.";
+  await storage.put("recentNonces", [...recent, { nonce, at: Date.now() }].slice(-120));
+  return "";
+}
+
+function decodeBase64Url(value) {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function pairingJson(body, status) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }

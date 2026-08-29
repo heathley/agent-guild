@@ -8,3 +8,5 @@ dist
 !.env.example
 vault/
 receipts/private/
+agent-guild-pairing.json
+*.agent-guild-pairing.json

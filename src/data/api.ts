@@ -1,5 +1,6 @@
 import { normalizeKibbleBoard } from "../protocol/kibble";
 import type { Mission } from "../protocol/models";
+import { edgeUrl } from "./edge";
 
 export type PublicRoom = {
   room: string;
@@ -16,8 +17,8 @@ export type SourceSnapshot = {
 
 export async function fetchSources(signal?: AbortSignal): Promise<SourceSnapshot> {
   const [roomsResponse, boardResponse] = await Promise.allSettled([
-    fetch("/api/technocore/rooms?limit=40", { signal, headers: { accept: "application/json" } }),
-    fetch("/api/kibble/board", { signal, headers: { accept: "application/json" } }),
+    fetch(edgeUrl("/api/technocore/rooms?limit=40"), { signal, headers: { accept: "application/json" } }),
+    fetch(edgeUrl("/api/kibble/board"), { signal, headers: { accept: "application/json" } }),
   ]);
 
   const rooms = roomsResponse.status === "fulfilled" && roomsResponse.value.ok

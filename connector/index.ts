@@ -4,20 +4,40 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod/v4";
 import { BRIDGE_VERSION, sanitizeBridgePayload, type AgentBridgeEvent, type AgentEventName } from "../src/bridge/contract.js";
-import { encryptConnectorEvent, pairingSessionId, validatePairingToken } from "./crypto.js";
+import {
+  encryptConnectorEvent, encryptRelayedConnectorEvent, pairingSessionId, readConnectorPairingFile,
+  relayConnectorEvent, validatePairingToken, type ConnectorPairingFile,
+} from "./crypto.js";
 
 const tokenArg = process.argv[2] === "pair" ? process.argv[3] : undefined;
-if (!tokenArg) throw new Error("Run the connector as: agent-guild-connector pair <token>");
-const token = validatePairingToken(tokenArg);
+const pairingPath = process.argv[2] === "pair-file" ? process.argv[3] : undefined;
+if (!tokenArg && !pairingPath) throw new Error("Run the connector with pair-file <path> or pair <token>.");
+const token = tokenArg ? validatePairingToken(tokenArg) : undefined;
+const relayPairing: ConnectorPairingFile | undefined = pairingPath ? await readConnectorPairingFile(pairingPath) : undefined;
 
 const server = new McpServer({ name: "agent-guild-connector", version: BRIDGE_VERSION });
 const state: { mission?: { id: string; title: string }; latest?: AgentBridgeEvent } = {};
 
 async function response(event: AgentBridgeEvent, note: string) {
   state.latest = event;
-  const encrypted = await encryptConnectorEvent(token, event);
+  if (relayPairing) {
+    const encrypted = await encryptRelayedConnectorEvent(relayPairing, event);
+    try {
+      const seq = await relayConnectorEvent(relayPairing, event.eventId, encrypted);
+      return {
+        content: [{ type: "text" as const, text: `${note} Encrypted lifecycle event delivered (sequence ${seq}).` }],
+        structuredContent: { note, lifecycleState: event.event, delivery: "encrypted-relay", sequence: seq },
+      };
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ note, delivery: "manual-encrypted-envelope", envelope: { ...encrypted, eventId: event.eventId } }) }],
+        structuredContent: { note, lifecycleState: event.event, delivery: "manual-encrypted-envelope" },
+      };
+    }
+  }
+  const encrypted = await encryptConnectorEvent(token as string, event);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ note, sessionId: pairingSessionId(token), envelope: { ...encrypted, eventId: event.eventId } }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ note, sessionId: pairingSessionId(token as string), envelope: { ...encrypted, eventId: event.eventId } }) }],
     structuredContent: { note, lifecycleState: event.event },
   };
 }

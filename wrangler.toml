@@ -2,6 +2,14 @@ name = "agent-guild-edge"
 main = "worker/index.js"
 compatibility_date = "2026-08-01"
 
+[[durable_objects.bindings]]
+name = "PAIRING_SESSIONS"
+class_name = "PairingSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PairingSession"]
+
 [vars]
 PUBLIC_WRITES = "false"
 # APP_ORIGIN is intentionally unset until a reviewed deployment exists.
