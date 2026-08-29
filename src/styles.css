@@ -105,6 +105,8 @@ h1 em { color: var(--cyan); font-style: normal; }
 [data-tip]:not(.station) { position: relative; }
 [data-tip]::after { content: attr(data-tip); position: absolute; z-index: 100; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); width: max-content; max-width: 260px; background: var(--ice); color: var(--base); border: 1px solid var(--base); padding: 8px 10px; font: 500 11px/1.4 Inter, sans-serif; opacity: 0; pointer-events: none; transition: opacity .15s; }
 [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
+.station-spot::after { top: calc(100% + 10px); bottom: auto; }
+.station-prove::after { left: 0; transform: none; }
 
 .missions { border-bottom: 1px solid var(--line); }
 .icon-button { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--surface); cursor: pointer; border-radius: 2px; }
