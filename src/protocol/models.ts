@@ -47,6 +47,13 @@ export type AttachedEvidence = {
   digest?: string;
 };
 
+export type AgentActivity = {
+  eventId: string;
+  event: "mission.selected" | "mission.researching" | "mission.building" | "mission.testing" | "mission.blocked";
+  agentDid: string;
+  occurredAt: string;
+};
+
 export type LedgerEntry = {
   id: string;
   mission: Mission;
@@ -55,6 +62,7 @@ export type LedgerEntry = {
   commitUrl?: string;
   testSummary?: string;
   evidence?: AttachedEvidence[];
+  lastActivity?: AgentActivity;
   receipt?: Receipt;
   review?: {
     reviewerDid: string;

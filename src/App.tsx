@@ -23,6 +23,7 @@ import {
 } from "./identity/vault";
 import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
 import { attachEvidenceFromEvent } from "./ledger/evidence";
+import { recordActivityFromEvent } from "./ledger/activity";
 import type { LedgerEntry, Mission, ProofState } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
@@ -97,8 +98,9 @@ function App() {
       const last = entries.at(-1);
       if (last) {
         setActiveMission(last.mission);
-        setStation(stationForState(last.state));
-        setMascotMood(moodForState(last.state));
+        const activityWins = ["planned", "claimed"].includes(last.state) && last.lastActivity;
+        setStation(activityWins ? stationForEvent(last.lastActivity!.event) : stationForState(last.state));
+        setMascotMood(activityWins ? moodForEvent(last.lastActivity!.event) : moodForState(last.state));
       }
     }).catch(() => undefined);
     void refreshTechnocore();
@@ -227,6 +229,8 @@ function App() {
       if (!result.accepted) return `Evidence rejected: ${result.reason?.replaceAll("-", " ")}. Proof state was not changed.`;
       nextLedger = result.entries;
     }
+    const activity = recordActivityFromEvent(nextLedger, event, connectedDid);
+    if (activity.accepted) nextLedger = activity.entries;
     if (nextLedger !== ledger) { setLedger(nextLedger); await saveLedger(nextLedger); }
     setStation(stationForEvent(event.event));
     setMascotMood(moodForEvent(event.event));

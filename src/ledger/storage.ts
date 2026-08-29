@@ -67,7 +67,11 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
       ["commit", "test", "receipt", "review"].includes(evidence.kind) && typeof evidence.agentDid === "string" &&
       typeof evidence.attachedAt === "string" && (evidence.publicUrl === undefined || typeof evidence.publicUrl === "string") &&
       (evidence.digest === undefined || typeof evidence.digest === "string")
-    )));
+    ))) && (item.lastActivity === undefined || (
+      typeof item.lastActivity.eventId === "string" &&
+      ["mission.selected", "mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(item.lastActivity.event) &&
+      typeof item.lastActivity.agentDid === "string" && typeof item.lastActivity.occurredAt === "string"
+    ));
 }
 
 async function derive(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
