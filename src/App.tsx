@@ -30,6 +30,7 @@ import {
 import "./styles.css";
 
 type Station = "spot" | "pick" | "make" | "team" | "prove";
+type MascotMood = "ready" | "scanning" | "focused" | "working" | "blocked" | "social" | "proud";
 type SourceTab = "technocore" | "kibble" | "local";
 type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
 type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
@@ -41,6 +42,16 @@ const STATIONS: { id: Station; label: string; eyebrow: string; description: stri
   { id: "team", label: "TEAM UP", eyebrow: "04 · REVIEW", description: "Ask a different DID to inspect the exact artifact or result hash." },
   { id: "prove", label: "PROVE IT", eyebrow: "05 · RECEIPT", description: "Match the signed public result by DID, nonce, and exact text." },
 ];
+
+const MASCOT_STATUS: Record<MascotMood, string> = {
+  ready: "READY FOR A REAL MISSION",
+  scanning: "SCANNING FOR USEFUL WORK",
+  focused: "MISSION LOCKED IN",
+  working: "WORKING IN YOUR AGENT",
+  blocked: "WAITING FOR HELP",
+  social: "LOOKING FOR A REVIEWER",
+  proud: "PROOF CHECKED",
+};
 
 const PROOF_STEPS: { state: ProofState; number: string; label: string; title: string; detail: string }[] = [
   { state: "planned", number: "01", label: "PLANNED", title: "Finish line set", detail: "Private workspace only" },
@@ -62,6 +73,7 @@ function App() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [activeMission, setActiveMission] = useState<Mission | null>(null);
   const [station, setStation] = useState<Station>("spot");
+  const [mascotMood, setMascotMood] = useState<MascotMood>("ready");
   const [identityOpen, setIdentityOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
@@ -85,6 +97,7 @@ function App() {
       if (last) {
         setActiveMission(last.mission);
         setStation(stationForState(last.state));
+        setMascotMood(moodForState(last.state));
       }
     }).catch(() => undefined);
     void refreshTechnocore();
@@ -175,6 +188,7 @@ function App() {
     await saveLedger(next);
     setActiveMission(mission);
     setStation("pick");
+    setMascotMood("focused");
   }
 
   async function updateProof(state: ProofState, patch: Partial<LedgerEntry> = {}) {
@@ -184,6 +198,7 @@ function App() {
     setLedger(next);
     await saveLedger(next);
     setStation(stationForState(state));
+    setMascotMood(moodForState(state));
   }
 
   async function handleAgentEvent(event: AgentBridgeEvent) {
@@ -197,6 +212,7 @@ function App() {
       });
     }
     setStation(stationForEvent(event.event));
+    setMascotMood(moodForEvent(event.event));
   }
 
   async function startInAgent() {
@@ -277,8 +293,8 @@ function App() {
             <div className="brain-note"><Bot size={18} /><span><strong>Your agent stays the brain.</strong> Codex, Claude, Cursor, a local model, or any MCP client. Agent Guild adds the workflow—not another AI bill.</span></div>
           </div>
           <div className="hero-visual" aria-label="FLOP robot-rabbit mascot">
-            <div className="mascot-frame"><img src={mascotAsset} alt="FLOP robot-rabbit standing ready" /></div>
-            <div className="mascot-status"><span /> READY FOR A REAL MISSION</div>
+            <div className="mascot-frame"><Mascot mood={mascotMood} alt={`FLOP robot-rabbit: ${MASCOT_STATUS[mascotMood].toLowerCase()}`} /></div>
+            <div className="mascot-status" aria-live="polite"><span /> {MASCOT_STATUS[mascotMood]}</div>
           </div>
         </section>
 
@@ -294,7 +310,7 @@ function App() {
                 <span className="station-dot" /><small>{item.eyebrow}</small><strong>{item.label}</strong><span>{item.description}</span>
               </article>
             ))}
-            <div className={`map-mascot map-mascot-${station}`} aria-hidden="true"><img src={mascotAsset} alt="" /></div>
+            <div className={`map-mascot map-mascot-${station}`} data-state={MASCOT_STATUS[mascotMood]} aria-hidden="true"><Mascot mood={mascotMood} compact /></div>
             <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Choose a public signal or write a local task"}</small></div>
           </div>
         </section>
@@ -849,6 +865,13 @@ function shortPublicDid(value: string) {
 
 function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL API" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
 function stationForState(state: ProofState): Station { return state === "review-requested" || state === "reviewed" ? "team" : ["published", "verified"].includes(state) ? "prove" : state === "claimed" ? "make" : "pick"; }
+function moodForState(state: ProofState): MascotMood {
+  if (state === "review-requested") return "social";
+  if (state === "reviewed" || state === "verified") return "proud";
+  if (state === "published") return "focused";
+  if (state === "claimed") return "working";
+  return "focused";
+}
 function proofReached(current: ProofState, target: ProofState) {
   const order: ProofState[] = ["planned", "claimed", "published", "verified", "review-requested", "reviewed"];
   return order.indexOf(current) >= order.indexOf(target);
@@ -859,6 +882,26 @@ function stationForEvent(event: AgentBridgeEvent["event"]): Station {
   if (["mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(event)) return "make";
   if (event === "review.requested") return "team";
   return "prove";
+}
+function moodForEvent(event: AgentBridgeEvent["event"]): MascotMood {
+  if (event === "agent.idle") return "ready";
+  if (event === "agent.connected" || event === "mission.scanning") return "scanning";
+  if (event === "mission.selected" || event === "approval.requested" || event === "proof.published") return "focused";
+  if (["mission.researching", "mission.building", "mission.testing"].includes(event)) return "working";
+  if (event === "mission.blocked") return "blocked";
+  if (event === "review.requested") return "social";
+  return "proud";
+}
+function Mascot({ mood, alt, compact = false }: { mood: MascotMood; alt?: string; compact?: boolean }) {
+  return <div className={`mascot-art mascot-art-${compact ? "compact" : "full"} mood-${mood}`}>
+    <img src={mascotAsset} alt={alt || ""} />
+    <span className="digital-face" aria-hidden="true">
+      <span className="face-eye face-eye-left" />
+      <span className="face-eye face-eye-right" />
+      <span className="face-mouth" />
+      <span className="face-scan" />
+    </span>
+  </div>;
 }
 function download(name: string, text: string) {
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
