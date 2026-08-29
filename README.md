@@ -38,6 +38,14 @@ Run the complete validation suite:
 npm run check
 ```
 
+The final step is a release-safety audit. It checks tracked and not-yet-committed release files plus the production bundle without printing matched secret values:
+
+```bash
+npm run audit:release
+```
+
+Identity backups, pairing files, ledger backups, `.dev.vars`, local Wrangler state, private receipts, key containers, and project-scoped Codex configuration are ignored by Git. See [`SECURITY.md`](SECURITY.md) before publishing a repository or reporting a sensitive bug.
+
 ## MCP connector
 
 The website downloads a one-time `agent-guild-pairing.json` file. It contains temporary session secrets, expires in 24 hours, and is ignored by Git. Keep it local and delete it after pairing. During local development, run:
@@ -152,6 +160,8 @@ The read-only discovery flow, local identity vertical slice, authenticated bidir
 - create a separate writes-disabled staging deployment and verify the three Technocore protocol hashes there;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before deployment, Git push, or any public message.
+
+The repository deliberately has no assumed public remote. A GitHub repository and license must be chosen by the owner before the first push; Agent Guild does not treat the live preview or a local commit hash as a public source artifact.
 
 ## Current preview
 

@@ -14,7 +14,8 @@
     "connector:mission-smoke": "tsx connector/mission-smoke.ts",
     "connector:evidence-smoke": "tsx connector/evidence-smoke.ts",
     "connector:relay-smoke": "tsx connector/relay-smoke.ts",
-    "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build"
+    "audit:release": "node scripts/release-audit.mjs",
+    "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build && npm run audit:release"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
