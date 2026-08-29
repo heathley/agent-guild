@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BRIDGE_VERSION, type AgentBridgeEvent } from "../bridge/contract";
 import type { LedgerEntry } from "../protocol/models";
-import { attachEvidenceFromEvent } from "./evidence";
+import { attachEvidenceFromEvent, attachManualEvidence } from "./evidence";
 
 const did = "did:key:z6MkevNrxH1t5ZwJ6nTwEPsSEH4ath6Si5WRFrafM8AynvBq";
 const entry: LedgerEntry = {
@@ -21,7 +21,7 @@ describe("agent evidence ledger attachment", () => {
     expect(result.entries[0].state).toBe("planned");
     expect(result.entries[0].evidence).toEqual([{
       eventId: "event-evidence-1", missionId: "mission-1", kind: "test", agentDid: did,
-      attachedAt: "2026-08-29T01:00:00.000Z", digest: "sha256:1234567890abcdef",
+      source: "agent", attachedAt: "2026-08-29T01:00:00.000Z", digest: "sha256:1234567890abcdef",
     }]);
   });
 
@@ -39,5 +39,12 @@ describe("agent evidence ledger attachment", () => {
   it("requires a safe digest or HTTPS URL", () => {
     const unsafe = { ...event, evidence: { kind: "test" as const, publicUrl: "http://localhost/result" } };
     expect(attachEvidenceFromEvent([entry], unsafe, did).reason).toBe("invalid-reference");
+  });
+
+  it("keeps manually attached evidence self-reported and planned", () => {
+    const result = attachManualEvidence([entry], "mission-1", did, "commit", "https://github.com/heathley/agent-guild/commit/123");
+    expect(result.accepted).toBe(true);
+    expect(result.entries[0].state).toBe("planned");
+    expect(result.entries[0].evidence?.[0].source).toBe("manual");
   });
 });

@@ -42,6 +42,7 @@ export type AttachedEvidence = {
   missionId: string;
   kind: "commit" | "test" | "receipt" | "review";
   agentDid: string;
+  source?: "agent" | "manual";
   attachedAt: string;
   publicUrl?: string;
   digest?: string;
@@ -62,6 +63,7 @@ export type LedgerEntry = {
   commitUrl?: string;
   testSummary?: string;
   evidence?: AttachedEvidence[];
+  activities?: AgentActivity[];
   lastActivity?: AgentActivity;
   receipt?: Receipt;
   review?: {

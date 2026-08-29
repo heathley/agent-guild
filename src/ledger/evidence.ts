@@ -22,12 +22,37 @@ export function attachEvidenceFromEvent(entries: LedgerEntry[], event: AgentBrid
     missionId: event.mission.id,
     kind: event.evidence.kind,
     agentDid: expectedDid,
+    source: "agent",
     attachedAt: event.occurredAt,
     ...(event.evidence.publicUrl ? { publicUrl: event.evidence.publicUrl } : {}),
     ...(event.evidence.digest ? { digest: event.evidence.digest } : {}),
   };
   const next = [...entries];
   next[index] = { ...current, evidence: [...(current.evidence || []), evidence], updatedAt: event.occurredAt };
+  return { accepted: true, entries: next };
+}
+
+export function attachManualEvidence(
+  entries: LedgerEntry[],
+  missionId: string,
+  expectedDid: string | null,
+  kind: AttachedEvidence["kind"],
+  reference: string,
+): EvidenceAttachResult {
+  if (!expectedDid) return { accepted: false, entries, reason: "did-mismatch" };
+  const index = entries.findIndex((entry) => entry.mission.id === missionId);
+  if (index < 0) return { accepted: false, entries, reason: "mission-mismatch" };
+  const trimmed = reference.trim();
+  const isUrl = (() => { try { return new URL(trimmed).protocol === "https:"; } catch { return false; } })();
+  if (!validReference(isUrl ? trimmed : undefined, isUrl ? undefined : trimmed)) return { accepted: false, entries, reason: "invalid-reference" };
+  const now = new Date().toISOString();
+  const evidence: AttachedEvidence = {
+    eventId: crypto.randomUUID(), missionId, kind, agentDid: expectedDid, source: "manual", attachedAt: now,
+    ...(isUrl ? { publicUrl: trimmed } : { digest: trimmed }),
+  };
+  const next = [...entries];
+  const current = entries[index];
+  next[index] = { ...current, evidence: [...(current.evidence || []), evidence], updatedAt: now };
   return { accepted: true, entries: next };
 }
 

@@ -1,0 +1,19 @@
+{
+  "name": "@agent-guild/connector",
+  "version": "0.1.0-beta.1",
+  "description": "Model-neutral local MCP connector for Agent Guild",
+  "type": "module",
+  "bin": {
+    "agent-guild-connector": "dist/connector/index.js"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.2"
+  },
+  "license": "MIT",
+  "homepage": "https://agent-guild-heathley.pages.dev",
+  "repository": { "type": "git", "url": "https://github.com/heathley/agent-guild.git" },
+  "keywords": ["mcp", "agent", "technocore", "did", "local-first"]
+}

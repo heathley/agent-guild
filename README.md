@@ -13,13 +13,14 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 - Exact Technocore sweep, monotonic nonce, signed-message schema, read-back matching, and sanitized receipt generation.
 - Separate `planned`, `published`, `verified`, `review-requested`, and `reviewed` states.
 - Independent review validation: a different DID must sign the same result hash.
-- A model-neutral MCP connector with eight narrow lifecycle tools and no general message-posting tool.
+- A model-neutral, npm-ready MCP connector package with eight narrow lifecycle tools and no general message-posting tool.
 - Strict allowlisted bridge events. Raw prompts, environment values, tokens, seeds, and terminal logs are not accepted.
 - A 24-hour encrypted pairing session: AES-GCM mission/event encryption, P-256 request authentication, replay protection, and an edge relay that never receives the encryption or signing private key.
 - Bidirectional mission handoff: the browser sends a strict allowlisted mission pack; the connector acknowledges selection and returns real research/build/test lifecycle events.
 - Manual encrypted-envelope fallback when the local preview is running without the edge Worker.
 - Cloudflare Worker with fixed Technocore/Kibble targets and public writes disabled by default.
 - FLOP `design.md` colors, Space Mono/Inter typography, reduced-motion support, and a replaceable temporary V3 mascot raster.
+- Guided three-step onboarding, editable mission packs, mission history, activity timeline, and file-first encrypted restore flows.
 
 No demo missions or fake agents are bundled. When a public source is empty or unreachable, the interface says so.
 
@@ -56,7 +57,17 @@ npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json
 
 The command contains no secret. On a deployed preview, encrypted lifecycle events arrive automatically. On the Vite-only local preview, the connector returns an encrypted fallback envelope that can be pasted into the connector panel.
 
-Refreshing the site does not require a new DID or a new pairing file. Choose `USE EXISTING PAIRING FILE` in the connector panel. The browser validates the file locally against the current DID, exact Agent Guild relay, expiry, and P-256 signing material, then re-registers the same temporary session. The file is never uploaded; only its public verification key reaches the edge. A new file is required only after the 24-hour session expires or when the DID/relay changes.
+Refreshing the same browser tab automatically restores its temporary session. After closing the tab or moving devices, choose `USE EXISTING PAIRING FILE`. The browser validates the file locally against the current DID, exact Agent Guild relay, expiry, and P-256 signing material, then re-registers the same temporary session. The file is never uploaded; only its public verification key reaches the edge. A new file is required only after the 24-hour session expires or when the DID/relay changes.
+
+The publishable package is built from `packages/connector` and checked without publishing:
+
+```bash
+npm run build:connector-package
+npm run connector:package-smoke
+npm pack ./packages/connector --dry-run
+```
+
+After the package owner separately approves and completes npm publication, set `VITE_CONNECTOR_PUBLISHED=true`. The website will then show the pinned command `npx @agent-guild/connector@0.1.0-beta.1 …`; it never points users at an unpublished package.
 
 For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
 
@@ -151,15 +162,15 @@ Timeout does not trigger an automatic resend.
 
 The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temporary raster cutout based on the approved V3 reference sheet. Replace that file with the official master asset (or change this single import to the official SVG) when FLOP Labs supplies it; no layout or animation code needs to change.
 
-## Status and remaining beta work
+## Status and remaining external actions
 
-The read-only discovery flow, local identity vertical slice, authenticated bidirectional connector relay, DID-bound local evidence persistence, and Codex acceptance test are implemented. Before a public beta:
+The read-only discovery flow, self-service local and external identity paths, authenticated bidirectional connector relay, DID-bound evidence/activity history, exact-message proof workspace, independent review package, npm-ready connector package, and Codex/generic MCP acceptance tests are implemented locally. The remaining items create external state and require separate approval:
 
-- complete the external-signer publishing path;
-- package the connector for a user-friendly install instead of requiring a repository checkout;
-- create a separate writes-disabled staging deployment and verify the three Technocore protocol hashes there;
+- deploy the completed writes-disabled UI and Worker update;
+- publish `@agent-guild/connector@0.1.0-beta.1` to npm, then rebuild the UI with `VITE_CONNECTOR_PUBLISHED=true`;
+- create the public `heathley/agent-guild` repository and push the reviewed local commits;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
-- obtain separate approval before deployment, Git push, or any public message.
+- obtain separate approval before each deployment, npm publication, Git push, or public message.
 
 The repository deliberately has no assumed public remote. Agent Guild is available under the MIT License, but it does not treat the live preview or a local commit hash as a public source artifact. The GitHub repository must still be created by the owner before the first push.
 

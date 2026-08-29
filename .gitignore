@@ -22,3 +22,5 @@ agent-guild-ledger*.json
 *.p12
 *.pfx
 .codex/
+packages/connector/dist/
+packages/connector/*.tgz

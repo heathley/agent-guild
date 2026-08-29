@@ -19,6 +19,7 @@ describe("agent lifecycle persistence", () => {
     expect(result.accepted).toBe(true);
     expect(result.entries[0].state).toBe("planned");
     expect(result.entries[0].lastActivity?.event).toBe("mission.researching");
+    expect(result.entries[0].activities).toHaveLength(1);
   });
 
   it("rejects a different DID or mission", () => {
@@ -31,5 +32,6 @@ describe("agent lifecycle persistence", () => {
     const newest = recordActivityFromEvent([entry], testing, did).entries;
     const replayed = recordActivityFromEvent(newest, researching, did).entries;
     expect(replayed[0].lastActivity?.event).toBe("mission.testing");
+    expect(replayed[0].activities?.map((item) => item.event)).toEqual(["mission.researching", "mission.testing"]);
   });
 });

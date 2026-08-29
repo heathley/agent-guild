@@ -65,8 +65,13 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
     (item.evidence === undefined || (Array.isArray(item.evidence) && item.evidence.every((evidence) =>
       evidence && typeof evidence.eventId === "string" && typeof evidence.missionId === "string" &&
       ["commit", "test", "receipt", "review"].includes(evidence.kind) && typeof evidence.agentDid === "string" &&
+      (evidence.source === undefined || evidence.source === "agent" || evidence.source === "manual") &&
       typeof evidence.attachedAt === "string" && (evidence.publicUrl === undefined || typeof evidence.publicUrl === "string") &&
       (evidence.digest === undefined || typeof evidence.digest === "string")
+    ))) && (item.activities === undefined || (Array.isArray(item.activities) && item.activities.every((activity) =>
+      activity && typeof activity.eventId === "string" &&
+      ["mission.selected", "mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(activity.event) &&
+      typeof activity.agentDid === "string" && typeof activity.occurredAt === "string"
     ))) && (item.lastActivity === undefined || (
       typeof item.lastActivity.eventId === "string" &&
       ["mission.selected", "mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(item.lastActivity.event) &&

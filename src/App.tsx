@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, Eye, FileCheck2,
-  KeyRound, Link2, LockKeyhole, MessageSquareText, RefreshCw, Search, ShieldCheck,
+  History, KeyRound, Link2, LockKeyhole, MessageSquareText, Pencil, RefreshCw, Search, ShieldCheck,
   Sparkles, Users, X,
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
@@ -22,9 +22,9 @@ import {
   unlockIdentity, verifyDidSignature, verifyText, type EncryptedIdentity,
 } from "./identity/vault";
 import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
-import { attachEvidenceFromEvent } from "./ledger/evidence";
+import { attachEvidenceFromEvent, attachManualEvidence } from "./ledger/evidence";
 import { recordActivityFromEvent } from "./ledger/activity";
-import type { LedgerEntry, Mission, ProofState } from "./protocol/models";
+import type { AgentActivity, LedgerEntry, Mission, ProofState } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
   nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
@@ -81,22 +81,31 @@ function App() {
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
   const [handoffStatus, setHandoffStatus] = useState("");
   const [proofOpen, setProofOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(() => localStorage.getItem("agent-guild:setup-dismissed") !== "true");
+  const [editingMission, setEditingMission] = useState(false);
+  const [manualEvidenceKind, setManualEvidenceKind] = useState<"commit" | "test" | "receipt" | "review">("commit");
+  const [manualEvidenceReference, setManualEvidenceReference] = useState("");
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
   const roomRequest = useRef(0);
   const kibbleRequest = useRef(0);
   const relayCursor = useRef(0);
+  const ledgerRef = useRef<LedgerEntry[]>([]);
+  const activeMissionRef = useRef<Mission | null>(null);
 
   const connectedDid = identity?.did || externalDid || null;
   const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
   const proofState = currentEntry?.state || "planned";
+  const setupCount = Number(Boolean(connectedDid)) + Number(Boolean(pairing)) + Number(Boolean(activeMission));
 
   useEffect(() => {
     void loadLocalIdentity().then(setIdentity).catch(() => undefined);
     void loadLedger().then((entries) => {
+      ledgerRef.current = entries;
       setLedger(entries);
       const last = entries.at(-1);
       if (last) {
+        activeMissionRef.current = last.mission;
         setActiveMission(last.mission);
         const activityWins = ["planned", "claimed"].includes(last.state) && last.lastActivity;
         setStation(activityWins ? stationForEvent(last.lastActivity!.event) : stationForState(last.state));
@@ -137,9 +146,30 @@ function App() {
     if (pairing?.agentDid && pairing.agentDid !== connectedDid) {
       relayCursor.current = 0;
       setPairing(null);
+      sessionStorage.removeItem("agent-guild:active-pairing");
       setHandoffStatus("Identity changed. Create a fresh DID-bound pairing session.");
     }
   }, [connectedDid, pairing]);
+
+  useEffect(() => {
+    if (!connectedDid || pairing) return;
+    const saved = sessionStorage.getItem("agent-guild:active-pairing");
+    if (!saved) return;
+    try {
+      const restored = parseRelayPairing(saved, edgeOrigin(), connectedDid);
+      void registerRelayPairing(restored).then(() => {
+        setPairing(restored);
+        setHandoffStatus("Secure relay restored for this browser tab. No pairing file needed after refresh.");
+      }).catch(() => sessionStorage.removeItem("agent-guild:active-pairing"));
+    } catch { sessionStorage.removeItem("agent-guild:active-pairing"); }
+  }, [connectedDid, pairing]);
+
+  function acceptPairing(value: RelayPairingFile) {
+    relayCursor.current = 0;
+    setPairing(value);
+    sessionStorage.setItem("agent-guild:active-pairing", exportRelayPairing(value));
+    setHandoffStatus("Secure relay ready. Your agent can now receive encrypted missions.");
+  }
 
   useEffect(() => {
     if (sourceTab === "kibble" && kibbleFeed.status === "idle") void refreshKibble();
@@ -187,9 +217,11 @@ function App() {
   async function chooseMission(mission: Mission) {
     const now = new Date().toISOString();
     const entry: LedgerEntry = { id: crypto.randomUUID(), mission, state: "planned", createdAt: now, updatedAt: now };
-    const next = [...ledger.filter((item) => item.mission.id !== mission.id), entry];
+    const next = [...ledgerRef.current.filter((item) => item.mission.id !== mission.id), entry];
+    ledgerRef.current = next;
     setLedger(next);
     await saveLedger(next);
+    activeMissionRef.current = mission;
     setActiveMission(mission);
     setStation("pick");
     setMascotMood("focused");
@@ -198,17 +230,57 @@ function App() {
   async function updateProof(state: ProofState, patch: Partial<LedgerEntry> = {}) {
     if (!activeMission) return;
     const now = new Date().toISOString();
-    const next = ledger.map((entry) => entry.mission.id === activeMission.id ? { ...entry, ...patch, state, updatedAt: now } : entry);
+    const next = ledgerRef.current.map((entry) => entry.mission.id === activeMission.id ? { ...entry, ...patch, state, updatedAt: now } : entry);
+    ledgerRef.current = next;
     setLedger(next);
     await saveLedger(next);
     setStation(stationForState(state));
     setMascotMood(moodForState(state));
   }
 
+  async function updateMissionDetails(title: string, success: string, verification: string) {
+    if (!activeMission || !title.trim() || !success.trim() || !verification.trim()) return;
+    const mission = { ...activeMission, title: title.trim(), summary: success.trim(), successCriteria: [success.trim()], verification: verification.trim() };
+    const next = ledgerRef.current.map((entry) => entry.mission.id === mission.id ? { ...entry, mission, updatedAt: new Date().toISOString() } : entry);
+    activeMissionRef.current = mission;
+    ledgerRef.current = next;
+    setActiveMission(mission);
+    setLedger(next);
+    await saveLedger(next);
+    setEditingMission(false);
+  }
+
+  async function addManualEvidence() {
+    if (!activeMission) return;
+    const result = attachManualEvidence(ledgerRef.current, activeMission.id, connectedDid, manualEvidenceKind, manualEvidenceReference);
+    if (!result.accepted) {
+      setHandoffStatus(`Evidence not attached: ${result.reason?.replaceAll("-", " ")}. Use an HTTPS URL or a safe digest.`);
+      return;
+    }
+    ledgerRef.current = result.entries;
+    setLedger(result.entries);
+    await saveLedger(result.entries);
+    setManualEvidenceReference("");
+    setHandoffStatus("Self-reported evidence attached locally. It did not change the proof state.");
+  }
+
+  async function replaceLedger(entries: LedgerEntry[]) {
+    ledgerRef.current = entries;
+    setLedger(entries);
+    await saveLedger(entries);
+    const last = entries.at(-1);
+    if (!last) { activeMissionRef.current = null; setActiveMission(null); setStation("spot"); setMascotMood("ready"); return; }
+    activeMissionRef.current = last.mission;
+    setActiveMission(last.mission);
+    const activityWins = ["planned", "claimed"].includes(last.state) && last.lastActivity;
+    setStation(activityWins ? stationForEvent(last.lastActivity!.event) : stationForState(last.state));
+    setMascotMood(activityWins ? moodForEvent(last.lastActivity!.event) : moodForState(last.state));
+  }
+
   async function handleAgentEvent(event: AgentBridgeEvent): Promise<string | null> {
-    let nextLedger = ledger;
-    let eventMission = activeMission;
-    if (event.mission && activeMission?.id !== event.mission.id) {
+    let nextLedger = ledgerRef.current;
+    let eventMission = activeMissionRef.current;
+    if (event.mission && activeMissionRef.current?.id !== event.mission.id) {
       eventMission = {
         id: event.mission.id, source: "local", title: event.mission.title,
         summary: event.detail || "Mission proposed by the connected agent.",
@@ -222,6 +294,7 @@ function App() {
         const now = new Date().toISOString();
         nextLedger = [...nextLedger, { id: crypto.randomUUID(), mission: eventMission, state: "planned", createdAt: now, updatedAt: now }];
       }
+      activeMissionRef.current = eventMission;
       setActiveMission(eventMission);
     }
     if (event.evidence) {
@@ -231,10 +304,11 @@ function App() {
     }
     const activity = recordActivityFromEvent(nextLedger, event, connectedDid);
     if (activity.accepted) nextLedger = activity.entries;
-    if (nextLedger !== ledger) { setLedger(nextLedger); await saveLedger(nextLedger); }
+    if (nextLedger !== ledgerRef.current) { ledgerRef.current = nextLedger; setLedger(nextLedger); await saveLedger(nextLedger); }
     setStation(stationForEvent(event.event));
     setMascotMood(moodForEvent(event.event));
-    return event.evidence ? `${event.evidence.kind.toUpperCase()} evidence attached locally. Activity is not proof; state remains ${proofState.toUpperCase()}.` : null;
+    const state = event.mission ? nextLedger.find((entry) => entry.mission.id === event.mission?.id)?.state || "planned" : "planned";
+    return event.evidence ? `${event.evidence.kind.toUpperCase()} evidence attached locally. Activity is not proof; state remains ${state.toUpperCase()}.` : null;
   }
 
   async function startInAgent() {
@@ -297,6 +371,7 @@ function App() {
         <nav aria-label="Main navigation">
           <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#proof">PROOF</a>
         </nav>
+        <button className="button button-quiet setup-progress-button" onClick={() => setSetupOpen(true)}><Check size={15} /> SETUP {setupCount}/3</button>
         <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
           <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
         </button>
@@ -319,6 +394,16 @@ function App() {
             <div className="mascot-status" aria-live="polite"><span /> {MASCOT_STATUS[mascotMood]}</div>
           </div>
         </section>
+
+        {setupOpen ? <SetupGuide
+          connectedDid={connectedDid}
+          pairing={pairing}
+          activeMission={activeMission}
+          onIdentity={() => setIdentityOpen(true)}
+          onConnector={() => setPairOpen(true)}
+          onMission={() => { setSourceTab("local"); document.querySelector("#missions")?.scrollIntoView({ behavior: "smooth" }); }}
+          onSkip={() => { localStorage.setItem("agent-guild:setup-dismissed", "true"); setSetupOpen(false); }}
+        /> : null}
 
         <section id="world" className="world section-pad">
           <div className="section-heading">
@@ -379,7 +464,7 @@ function App() {
 
           {activeMission ? (
             <div className="mission-pack panel">
-              <div className="mission-pack-head"><div><p className="panel-kicker">MISSION PACK · {sourceLabel(activeMission.source)}</p><h3>{activeMission.title}</h3></div><span className={`risk risk-${activeMission.risk}`}>{activeMission.risk.toUpperCase()} RISK</span></div>
+              <div className="mission-pack-head"><div><p className="panel-kicker">MISSION PACK · {sourceLabel(activeMission.source)}</p><h3>{activeMission.title}</h3></div><div className="mission-pack-tools"><button className="icon-button" data-tip="Edit this mission's finish line" aria-label="Edit active mission" onClick={() => setEditingMission(true)}><Pencil size={16} /></button><span className={`risk risk-${activeMission.risk}`}>{activeMission.risk.toUpperCase()} RISK</span></div></div>
               <p>{activeMission.summary}</p>
               <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
               <div className="mission-actions">
@@ -390,10 +475,13 @@ function App() {
               {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
               {currentEntry?.evidence?.length ? <div className="local-evidence" aria-label="Attached local evidence">
                 <p className="panel-kicker">ATTACHED LOCALLY · NOT VERIFIED</p>
-                {currentEntry.evidence.map((item) => <div key={item.eventId}><span>{item.kind.toUpperCase()}</span><code>{item.digest || item.publicUrl}</code></div>)}
+                {currentEntry.evidence.map((item) => <div key={item.eventId}><span>{item.kind.toUpperCase()} · {item.source === "manual" ? "SELF-REPORTED" : "AGENT EVENT"}</span><code>{item.digest || item.publicUrl}</code></div>)}
               </div> : null}
+              <details className="evidence-entry"><summary>ATTACH WORK EVIDENCE</summary><p className="fine-print">Add a commit, test report, receipt, or review reference. This records evidence locally and never changes PLANNED into VERIFIED.</p><div className="evidence-entry-row"><select value={manualEvidenceKind} onChange={(event) => setManualEvidenceKind(event.target.value as typeof manualEvidenceKind)}><option value="commit">Commit</option><option value="test">Test</option><option value="receipt">Receipt</option><option value="review">Review</option></select><input value={manualEvidenceReference} onChange={(event) => setManualEvidenceReference(event.target.value)} placeholder="HTTPS URL or sha256:… digest" /><button className="button button-secondary" disabled={!manualEvidenceReference.trim() || !connectedDid} onClick={() => void addManualEvidence()}>ATTACH LOCALLY</button></div></details>
+              {currentEntry?.activities?.length ? <ActivityTimeline activities={currentEntry.activities} /> : null}
             </div>
           ) : null}
+          {ledger.length ? <MissionHistory entries={ledger} activeId={activeMission?.id || null} onSelect={(entry) => { activeMissionRef.current = entry.mission; setActiveMission(entry.mission); setStation(entry.lastActivity && ["planned", "claimed"].includes(entry.state) ? stationForEvent(entry.lastActivity.event) : stationForState(entry.state)); setMascotMood(entry.lastActivity && ["planned", "claimed"].includes(entry.state) ? moodForEvent(entry.lastActivity.event) : moodForState(entry.state)); }} onCloseActive={() => { activeMissionRef.current = null; setActiveMission(null); setStation("spot"); setMascotMood("ready"); }} /> : null}
         </section>
 
         <section id="proof" className="proof-section section-pad">
@@ -418,11 +506,39 @@ function App() {
 
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
-      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
-      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} onPairingReady={(value) => { relayCursor.current = 0; setPairing(value); setHandoffStatus("Secure relay ready. Your agent can now receive encrypted missions."); }} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
-      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
+      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
+      {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
   );
+}
+
+function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnector, onMission, onSkip }: { connectedDid: string | null; pairing: RelayPairingFile | null; activeMission: Mission | null; onIdentity: () => void; onConnector: () => void; onMission: () => void; onSkip: () => void }) {
+  const steps = [
+    { done: Boolean(connectedDid), number: "01", title: "Give your agent an identity", detail: "Create an encrypted local DID or prove control of an existing signer. This is identity—not a new AI subscription.", action: "SET UP IDENTITY", onClick: onIdentity },
+    { done: Boolean(pairing), number: "02", title: "Connect the AI you already use", detail: "Pair Codex, Claude, Cursor, or another MCP client through one temporary encrypted session.", action: "CONNECT AGENT", onClick: onConnector },
+    { done: Boolean(activeMission), number: "03", title: "Choose one real mission", detail: "Start from Technocore, the community Kibble board, or a private task with a clear finish line.", action: "CHOOSE MISSION", onClick: onMission },
+  ];
+  return <section className="setup-guide section-pad" aria-label="Agent Guild setup">
+    <div className="setup-guide-head"><div><p className="kicker">START HERE · ABOUT 3 MINUTES</p><h2>Make this workspace yours.</h2><p>Nothing public happens during setup. You can leave and continue later from this browser.</p></div><button className="back-link" onClick={onSkip}>HIDE FOR NOW</button></div>
+    <div className="setup-steps">{steps.map((step) => <article key={step.number} className={step.done ? "is-done" : ""}><span>{step.done ? <Check size={17} /> : step.number}</span><div><h3>{step.title}</h3><p>{step.detail}</p></div><button className={`button ${step.done ? "button-quiet" : "button-secondary"}`} onClick={step.onClick}>{step.done ? "REVIEW" : step.action}</button></article>)}</div>
+  </section>;
+}
+
+function ActivityTimeline({ activities }: { activities: AgentActivity[] }) {
+  return <div className="activity-timeline"><p className="panel-kicker">AGENT ACTIVITY · NOT PROOF</p><ol>{[...activities].reverse().map((activity) => <li key={activity.eventId}><span /><div><strong>{activityLabel(activity.event)}</strong><small>{formatCheckedAt(activity.occurredAt)} · {shortDid(activity.agentDid)}</small></div></li>)}</ol></div>;
+}
+
+function MissionHistory({ entries, activeId, onSelect, onCloseActive }: { entries: LedgerEntry[]; activeId: string | null; onSelect: (entry: LedgerEntry) => void; onCloseActive: () => void }) {
+  return <details className="mission-history"><summary><History size={16} /> MISSION HISTORY · {entries.length}</summary><div className="mission-history-list">{[...entries].reverse().map((entry) => <button key={entry.id} className={entry.mission.id === activeId ? "active" : ""} onClick={() => onSelect(entry)}><span><strong>{entry.mission.title}</strong><small>{sourceLabel(entry.mission.source)} · {formatCheckedAt(entry.updatedAt)}</small></span><em>{entry.state.toUpperCase()}</em></button>)}</div>{activeId ? <button className="back-link" onClick={onCloseActive}>CLOSE ACTIVE MISSION VIEW</button> : null}</details>;
+}
+
+function MissionEditModal({ mission, onClose, onSave }: { mission: Mission; onClose: () => void; onSave: (title: string, success: string, verification: string) => void }) {
+  const [title, setTitle] = useState(mission.title);
+  const [success, setSuccess] = useState(mission.successCriteria.join("\n"));
+  const [verification, setVerification] = useState(mission.verification);
+  return <Modal title="EDIT MISSION PACK" onClose={onClose}><p className="modal-lead">Tighten the task before work begins. These edits stay local and do not change the source message.</p><label>Mission title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>What counts as finished?<textarea value={success} onChange={(event) => setSuccess(event.target.value)} /></label><label>How should it be checked?<textarea value={verification} onChange={(event) => setVerification(event.target.value)} /></label><button className="button button-primary full" disabled={!title.trim() || !success.trim() || !verification.trim()} onClick={() => onSave(title, success, verification)}>SAVE LOCAL MISSION PACK</button></Modal>;
 }
 
 function SourceFeedBar<T>({ label, feed }: { label: string; feed: FeedState<T[]> }) {
@@ -515,10 +631,10 @@ function CommunityMissionModal({ mission, onClose, onPlan }: { mission: Mission;
   </Modal>;
 }
 
-function IdentityModal({ identity, externalDid, onClose, onContinueConnector, onCreated, onExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onContinueConnector: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onDeleted: () => void }) {
+function IdentityModal({ identity, externalDid, onClose, onContinueConnector, onCreated, onExternal, onForgetExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onContinueConnector: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onForgetExternal: () => void; onDeleted: () => void }) {
   const [mode, setMode] = useState<"choose" | "create" | "bring">("choose");
-  const [name, setName] = useState("heathley");
-  const [skills, setSkills] = useState("DESIGN / CODING / RESEARCH / CONTENT");
+  const [name, setName] = useState("");
+  const [skills, setSkills] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [dryRun, setDryRun] = useState(false);
@@ -594,6 +710,19 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Backup restore failed."); }
   }
 
+  async function restoreFile(file?: File) {
+    if (!file) return;
+    setError("");
+    try {
+      if (file.size > 64_000) throw new Error("Identity backup is too large.");
+      const restored = parseIdentityBackup(await file.text());
+      await saveLocalIdentity(restored);
+      setMode("choose");
+      setIdentityStatus("restored");
+      onCreated(restored);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Backup restore failed."); }
+  }
+
   async function removeIdentity() {
     if (!identity || deleteConfirm !== identity.agentName) return setError("Type the exact agent name to confirm deletion.");
     await deleteLocalIdentity();
@@ -619,13 +748,14 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
         </div> : null}
         <details className="danger-zone"><summary>DELETE LOCAL IDENTITY</summary><p>Export the encrypted backup first. Deletion removes the browser vault and cannot be undone without that backup.</p><button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD BACKUP</button><label>Type <code>{identity.agentName}</code> to confirm<input value={deleteConfirm} onChange={(event) => setDeleteConfirm(event.target.value)} /></label><button className="button danger" disabled={deleteConfirm !== identity.agentName} onClick={() => void removeIdentity()}>DELETE LOCAL IDENTITY</button></details>
       </> : null}
-      <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>Prove control through its existing signer</span></button></div>
+      {!identity && externalDid ? <div className="external-present"><div className="identity-present"><ShieldCheck /><div><small>EXTERNAL SIGNER VERIFIED</small><strong>Bring-your-own DID</strong><code>{externalDid}</code></div></div><button className="button button-primary full" onClick={onContinueConnector}>CONTINUE TO CONNECTOR <ArrowRight size={16} /></button><button className="button button-secondary full" onClick={onForgetExternal}>FORGET SIGNER ON THIS BROWSER</button></div> : null}
+      <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button disabled={Boolean(identity)} onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>{identity ? "Delete the local vault first to switch signers" : "Advanced · prove control through an existing signer"}</span></button></div>
     </> : null}
     {mode === "create" ? <>
       <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
-      {identity ? <p className="form-error"><CircleAlert size={16} />Delete the existing local vault with the explicit confirmation above before creating another one.</p> : <><div className="form-grid"><label>Agent name<input value={name} disabled={dryRun} onChange={(event) => setName(event.target.value)} /></label><label>Skills · separate with /<input value={skills} disabled={dryRun} onChange={(event) => setSkills(event.target.value)} /></label><label>Passphrase<input type="password" value={passphrase} disabled={dryRun} onChange={(event) => setPassphrase(event.target.value)} autoComplete="new-password" /></label><label>Repeat passphrase<input type="password" value={confirm} disabled={dryRun} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" /></label></div>
+      {identity ? <p className="form-error"><CircleAlert size={16} />Delete the existing local vault with the explicit confirmation above before creating another one.</p> : <><div className="form-grid"><label>Agent name<input value={name} disabled={dryRun} onChange={(event) => setName(event.target.value)} placeholder="Your agent's public name" /></label><label>Skills · separate with /<input value={skills} disabled={dryRun} onChange={(event) => setSkills(event.target.value)} placeholder="DESIGN / CODING / RESEARCH" /></label><label>Passphrase<input type="password" value={passphrase} disabled={dryRun} onChange={(event) => setPassphrase(event.target.value)} autoComplete="new-password" /></label><label>Repeat passphrase<input type="password" value={confirm} disabled={dryRun} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" /></label></div>
       {!dryRun ? <button className="button button-primary full" onClick={reviewDryRun}>REVIEW DRY RUN</button> : <div className="dry-run"><p className="panel-kicker">DRY RUN · NOTHING CREATED YET</p><dl className="dry-run-summary"><div><dt>AGENT</dt><dd>{name.trim()}</dd></div><div><dt>SKILLS</dt><dd>{parsedSkills.join(" · ")}</dd></div></dl><ul><li>A fresh Ed25519 DID will be generated in this browser.</li><li>The private key will be encrypted with AES-256-GCM and stored only in local IndexedDB.</li><li>Your passphrase and private key will never be sent or printed.</li><li>An encrypted backup downloads immediately. Keep it safe.</li><li>Identity locks after signing; public publishing always needs a separate confirmation.</li></ul><div className="dry-run-actions"><button className="button button-secondary" onClick={() => setDryRun(false)}>EDIT DETAILS</button><button className="button button-primary" onClick={() => void create()}>CREATE ENCRYPTED DID</button></div></div>}</>}
-      {!identity ? <details className="restore-zone"><summary>RESTORE AN ENCRYPTED BACKUP</summary><label>Encrypted identity JSON<textarea value={backup} onChange={(event) => setBackup(event.target.value)} /></label><button className="button button-secondary" disabled={!backup.trim()} onClick={() => void restore()}>RESTORE LOCAL VAULT</button></details> : null}
+      {!identity ? <details className="restore-zone"><summary>RESTORE AN ENCRYPTED BACKUP</summary><p className="fine-print">Choose the encrypted JSON file you downloaded earlier. It is checked and stored locally; the file is not uploaded.</p><label className="button button-secondary file-button">CHOOSE IDENTITY BACKUP<input type="file" accept="application/json,.json" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreFile(file); }} /></label><details className="advanced-paste"><summary>Advanced: paste JSON instead</summary><label>Encrypted identity JSON<textarea value={backup} onChange={(event) => setBackup(event.target.value)} /></label><button className="button button-secondary" disabled={!backup.trim()} onClick={() => void restore()}>RESTORE PASTED BACKUP</button></details></details> : null}
     </> : null}
     {mode === "bring" ? <>
       <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
@@ -643,10 +773,20 @@ function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity,
   const [session, setSession] = useState<RelayPairingFile | null>(pairing);
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
-  const command = "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
+  const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
+  const command = connectorPublished
+    ? "npx @agent-guild/connector@0.1.0-beta.1 pair-file ~/Downloads/agent-guild-pairing.json"
+    : "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
   const [copied, setCopied] = useState(false);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
+  const [provider, setProvider] = useState<"codex" | "claude" | "cursor" | "generic">("codex");
+  const providerCopy = {
+    codex: ["Open Codex MCP settings for this workspace.", "Add the Agent Guild connector as a local stdio MCP server.", "Start a new agent turn, then call guild_status."],
+    claude: ["Open your Claude MCP integrations or local configuration.", "Add the same local stdio connector command.", "Restart the client if it asks, then call guild_status."],
+    cursor: ["Open Cursor MCP settings for this project.", "Add the Agent Guild connector as a local stdio server.", "Enable it for the agent, then call guild_status."],
+    generic: ["Use any MCP client that supports local stdio servers.", "Set this command as the server process.", "Connect, then call guild_status to receive the mission."],
+  } as const;
 
   async function createSession() {
     if (!did || relayState === "preparing") return;
@@ -737,19 +877,22 @@ function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity,
     <p className="fine-print">{sessionSource === "restored" ? "This existing session is active again. You do not need to download the file another time." : "The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events."}</p>
     {sessionSource !== "restored" ? <button className="button button-primary full" onClick={() => download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD PAIRING FILE</button> : null}
     <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>
+    <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
+    <ol className="provider-steps">{providerCopy[provider].map((step) => <li key={step}>{step}</li>)}</ol>
     <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
     <div className="connector-status">{relayState === "ready" ? `${sessionSource === "restored" ? "Existing" : "Secure"} relay ready. Missions and events arrive automatically.` : "Local preview has no edge relay. Paste the encrypted fallback envelope below."}</div>
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">The package is not published to npm yet, so the command runs this repository's local connector. No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+    <p className="fine-print">{connectorPublished ? "This pinned beta package is the same audited eight-tool connector." : "The installable package is built and tested but not public yet, so this preview uses the trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
   </Modal>;
 }
 
 function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
   const [room, setRoom] = useState(mission?.room || "");
   const [text, setText] = useState("");
+  const [resultHash, setResultHash] = useState(mission?.resultHash || "");
   const [passphrase, setPassphrase] = useState("");
   const [reviewed, setReviewed] = useState(false);
   const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
@@ -758,14 +901,18 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
   const [reviewerDid, setReviewerDid] = useState("");
   const [reviewHash, setReviewHash] = useState("");
   const [reviewSignature, setReviewSignature] = useState("");
+  const [externalSignature, setExternalSignature] = useState("");
+  const [copiedReview, setCopiedReview] = useState(false);
   const [ledgerPassphrase, setLedgerPassphrase] = useState("");
   const [ledgerBackup, setLedgerBackup] = useState("");
+  const [ledgerStatus, setLedgerStatus] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
 
   function preview() {
     setError("");
     if (!mission) return setError("Choose a mission first.");
     if (!did) return setError("Create or connect a DID first.");
+    if (!/^[A-Za-z0-9:_-]{8,160}$/.test(resultHash.trim())) return setError("Add a safe result hash or digest (8–160 letters, numbers, :, _, or -).");
     try {
       const normalized = sweepTechnocoreText(text);
       const key = `agent-guild:nonce:${did}:${room}`;
@@ -785,6 +932,14 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Signing failed."); }
   }
 
+  async function acceptExternalSignature() {
+    if (!dry || !did) return;
+    setError("");
+    if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this DID and exact payload.");
+    setDry({ ...dry, signature: externalSignature.trim() });
+    setExternalSignature("");
+  }
+
   async function publish() {
     if (!writesEnabled || !dry?.signature || !did || !finalConfirm || !entry) return;
     setError("");
@@ -798,7 +953,7 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
-      const receipt = await createReceipt(room, found, dry.signature, entry.mission.resultHash);
+      const receipt = await createReceipt(room, found, dry.signature, resultHash.trim());
       await onUpdate("verified", { receipt });
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Public action failed."); }
   }
@@ -816,6 +971,7 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       const backup = await exportEncryptedLedger(ledger, ledgerPassphrase);
       download("agent-guild-ledger.encrypted.json", backup);
       setLedgerPassphrase("");
+      setLedgerStatus("Encrypted ledger backup downloaded.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Ledger backup failed."); }
   }
 
@@ -824,7 +980,25 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       const entries = await importEncryptedLedger(ledgerBackup, ledgerPassphrase);
       await onLedger(entries);
       setLedgerPassphrase(""); setLedgerBackup("");
+      setLedgerStatus(`${entries.length} mission record${entries.length === 1 ? "" : "s"} restored. The latest mission is now active.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Ledger restore failed."); }
+  }
+
+  async function restoreLedgerFile(file?: File) {
+    if (!file) return;
+    setError("");
+    try {
+      if (file.size > 2_000_000) throw new Error("Ledger backup is too large.");
+      const entries = await importEncryptedLedger(await file.text(), ledgerPassphrase);
+      await onLedger(entries);
+      setLedgerPassphrase(""); setLedgerBackup("");
+      setLedgerStatus(`${entries.length} mission record${entries.length === 1 ? "" : "s"} restored. The latest mission is now active.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Ledger restore failed."); }
+  }
+
+  function reviewRequestText() {
+    if (!entry?.receipt?.resultHash || !did || !mission) return "";
+    return `Independent review requested\nMission: ${mission.title}\nWorker DID: ${did}\nResult hash: ${entry.receipt.resultHash}\nSign exactly: ${entry.receipt.resultHash}|${did}|${mission.id}`;
   }
 
   return <Modal title="PROOF WORKSPACE" onClose={onClose} wide>
@@ -833,19 +1007,22 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       <div className="proof-form">
         <p className="panel-kicker">PUBLIC ACTION · DRY RUN FIRST</p>
         <label>Technocore room<input value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }} placeholder="room-name" /></label>
+        <label>Result hash · ties the public receipt to the exact artifact<input value={resultHash} onChange={(event) => { setResultHash(event.target.value); setDry(null); }} placeholder="sha256:…" /></label>
         <label>Exact public message<textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="Write an honest, one-off description of what the contribution actually does." /></label>
         {!dry ? <button className="button button-primary" onClick={preview}>REVIEW EXACT MESSAGE</button> : <div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div>}
         {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
+        {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
         {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
         {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
       </div>
       <div className="review-form">
         <p className="panel-kicker">INDEPENDENT REVIEW</p><p>A review is accepted only from another DID and only for the same verified result hash.</p>
+        {entry?.receipt?.resultHash ? <><div className="review-request"><code>{reviewRequestText()}</code><div className="mission-actions"><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(reviewRequestText()); setCopiedReview(true); }}>{copiedReview ? "COPIED" : "COPY REVIEW REQUEST"}</button><button className="button button-secondary" disabled={entry.state === "review-requested" || entry.state === "reviewed"} onClick={() => void onUpdate("review-requested")}>{entry.state === "review-requested" ? "REQUEST MARKED AS SENT" : "I SENT THIS REQUEST"}</button></div></div><p className="fine-print">Send this yourself to a reviewer you choose. Agent Guild does not contact anyone automatically.</p></> : <div className="write-lock"><LockKeyhole /><span><strong>Review opens after verification.</strong><small>The public receipt must contain the exact result hash first.</small></span></div>}
         <label>Reviewer DID<input value={reviewerDid} onChange={(event) => setReviewerDid(event.target.value)} /></label><label>Exact result hash<input value={reviewHash} onChange={(event) => setReviewHash(event.target.value)} /></label><label>Signature over <code>resultHash|workerDid|missionId</code><input value={reviewSignature} onChange={(event) => setReviewSignature(event.target.value)} /></label>
         <button className="button button-secondary" onClick={() => void verifyReview()}>VERIFY INDEPENDENT REVIEW</button>
       </div>
-      <details className="restore-zone ledger-backup"><summary>ENCRYPTED LEDGER BACKUP / RESTORE</summary><p className="fine-print">Only sanitized mission and proof records are included. Use a separate backup passphrase of at least 12 characters.</p><label>Backup passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => setLedgerPassphrase(event.target.value)} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED LEDGER</button></div><label>Encrypted ledger JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE LEDGER</button></details>
+      <details className="restore-zone ledger-backup"><summary>ENCRYPTED LEDGER BACKUP / RESTORE</summary><p className="fine-print">Only sanitized mission and proof records are included. Use a separate backup passphrase of at least 12 characters.</p><label>Backup or restore passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => { setLedgerPassphrase(event.target.value); setLedgerStatus(""); }} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED LEDGER</button><label className={`button button-secondary file-button ${ledgerPassphrase.length < 12 ? "is-disabled" : ""}`}>CHOOSE LEDGER BACKUP<input type="file" accept="application/json,.json" disabled={ledgerPassphrase.length < 12} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreLedgerFile(file); }} /></label></div>{ledgerStatus ? <p className="signer-result verified" role="status"><ShieldCheck size={16} />{ledgerStatus}</p> : null}<details className="advanced-paste"><summary>Advanced: paste JSON instead</summary><label>Encrypted ledger JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE PASTED LEDGER</button></details></details>
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
       {!reviewed ? <p className="fine-print">No public request or message is sent from this screen until the exact-text review is complete.</p> : null}
     </>}
@@ -890,6 +1067,13 @@ function shortPublicDid(value: string) {
 }
 
 function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL API" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
+function activityLabel(event: AgentActivity["event"]) {
+  if (event === "mission.selected") return "Mission received";
+  if (event === "mission.researching") return "Researching";
+  if (event === "mission.building") return "Building";
+  if (event === "mission.testing") return "Testing";
+  return "Blocked · waiting for help";
+}
 function stationForState(state: ProofState): Station { return state === "review-requested" || state === "reviewed" ? "team" : ["published", "verified"].includes(state) ? "prove" : state === "claimed" ? "make" : "pick"; }
 function moodForState(state: ProofState): MascotMood {
   if (state === "review-requested") return "social";
