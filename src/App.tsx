@@ -6,8 +6,8 @@ import {
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
 import {
-  createPairToken, createRelayPairing, decryptConnectorEvent, decryptRelayedEvent,
-  exportRelayPairing, pollRelayEvents, registerRelayPairing, sendRelayAssignment,
+  createRelayPairing, decryptRelayedEvent, exportRelayPairing, parseRelayPairing,
+  pollRelayEvents, registerRelayPairing, sendRelayAssignment,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
 import { ASSIGNMENT_VERSION, type AgentBridgeEvent, type MissionAssignment } from "./bridge/contract";
@@ -207,7 +207,7 @@ function App() {
       return;
     }
     if (!pairing) {
-      setHandoffStatus("Connect your agent first. Download the temporary pairing file and start the connector.");
+      setHandoffStatus("Connect your agent first. Reuse a valid pairing file or create a new temporary session.");
       setPairOpen(true);
       return;
     }
@@ -598,38 +598,65 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
 }
 
 function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
-  const [token] = useState(createPairToken);
   const [session, setSession] = useState<RelayPairingFile | null>(pairing);
-  const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">(pairing ? "ready" : "preparing");
+  const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
+  const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const command = "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
   const [copied, setCopied] = useState(false);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
 
-  useEffect(() => {
-    if (!did || session) return;
-    let cancelled = false;
-    void createRelayPairing(edgeOrigin(), did).then(async (created) => {
-      if (cancelled) return;
+  async function createSession() {
+    if (!did || relayState === "preparing") return;
+    setStatus("");
+    setRelayState("preparing");
+    try {
+      const created = await createRelayPairing(edgeOrigin(), did);
       setSession(created);
       try {
         await registerRelayPairing(created);
-        if (!cancelled) {
-          setRelayState("ready");
-          onPairingReady(created);
-        }
+        setSessionSource("new");
+        setRelayState("ready");
+        setStatus("New encrypted session ready. Download its pairing file once for your connector.");
+        onPairingReady(created);
       } catch {
-        if (!cancelled) setRelayState("manual");
+        setSessionSource("new");
+        setRelayState("manual");
       }
-    });
-    return () => { cancelled = true; };
-  }, [did, onPairingReady, session]);
+    } catch (error) {
+      setSession(null);
+      setRelayState("idle");
+      setStatus(error instanceof Error ? error.message : "A new pairing session could not be created.");
+    }
+  }
+
+  async function restoreSession(file?: File) {
+    if (!file || !did || relayState === "preparing") return;
+    setStatus("");
+    setRelayState("preparing");
+    try {
+      if (file.size > 16_000) throw new Error("Pairing file is too large.");
+      const restored = parseRelayPairing(await file.text(), edgeOrigin(), did);
+      await registerRelayPairing(restored);
+      setSession(restored);
+      setSessionSource("restored");
+      setRelayState("ready");
+      setStatus("Existing pairing restored. The DID was not recreated and no new file is needed.");
+      onPairingReady(restored);
+    } catch (error) {
+      setSession(null);
+      setSessionSource(null);
+      setRelayState("idle");
+      setStatus(error instanceof Error ? error.message : "Pairing file could not be restored.");
+    }
+  }
 
   async function importEvent() {
     try {
       const parsed = JSON.parse(envelope) as { envelope?: EncryptedEventEnvelope } & Partial<EncryptedEventEnvelope>;
       const encrypted = parsed.envelope || parsed as EncryptedEventEnvelope;
-      const event = session ? await decryptRelayedEvent(session, encrypted) : await decryptConnectorEvent(token, encrypted);
+      if (!session) throw new Error("No pairing session is active.");
+      const event = await decryptRelayedEvent(session, encrypted);
       if (did && event.identity.did !== did) throw new Error("Paired agent DID does not match this local identity.");
       onEvent(event);
       setStatus(`${event.event} accepted · ${event.eventId.slice(0, 8)}`);
@@ -641,17 +668,36 @@ function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity,
     <EmptyState icon={<KeyRound />} title="Set up identity first" detail="Create a local DID, restore its encrypted backup, or prove control of an existing signer before generating a pairing session." action="SET UP OR RESTORE IDENTITY" onAction={onNeedIdentity} />
   </Modal>;
 
+  if (!session) return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
+    <p className="modal-lead">A pairing file is a temporary encrypted connection pass—not your DID. Reuse a valid file after a refresh, or create a new 24-hour session.</p>
+    <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
+    <div className="pairing-choice panel">
+      <p className="panel-kicker">RECONNECT OR START FRESH</p>
+      <h3>Keep the same agent identity.</h3>
+      <p>Your file is checked locally for the current DID, Agent Guild relay, signing keys, and expiry before the connection is restored.</p>
+      <div className="pairing-actions">
+        <label className={`button button-primary ${relayState === "preparing" ? "is-disabled" : ""}`}>
+          USE EXISTING PAIRING FILE
+          <input type="file" accept="application/json,.json" disabled={relayState === "preparing"} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreSession(file); }} />
+        </label>
+        <button className="button button-secondary" disabled={relayState === "preparing"} onClick={() => void createSession()}>{relayState === "preparing" ? "CHECKING…" : "CREATE NEW PAIRING SESSION"}</button>
+      </div>
+    </div>
+    {status ? <p className="connector-status" role="status">{status}</p> : null}
+    <p className="fine-print">The selected file never leaves this browser. Agent Guild sends only its public verification key to the edge relay.</p>
+  </Modal>;
+
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
     <p className="modal-lead">Use the same local connector with Codex, Claude, Cursor, or any MCP client. It sends only allowlisted lifecycle events—not prompts, keys, environment values, or raw terminal output.</p>
     <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
     <p className="panel-kicker">ONE-TIME ENCRYPTED PAIRING FILE</p>
     <p className="fine-print">BOUND AGENT DID · <code>{shortDid(did)}</code></p>
-    <p className="fine-print">The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events. Keep the file local and delete it after pairing.</p>
-    <button className="button button-primary full" disabled={!session} onClick={() => session && download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD PAIRING FILE</button>
+    <p className="fine-print">{sessionSource === "restored" ? "This existing session is active again. You do not need to download the file another time." : "The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events."}</p>
+    {sessionSource !== "restored" ? <button className="button button-primary full" onClick={() => download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD PAIRING FILE</button> : null}
     <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>
     <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
-    <div className="connector-status">{relayState === "preparing" ? "Preparing secure session…" : relayState === "ready" ? "Secure relay ready. Events arrive automatically." : "Local preview has no edge relay. Paste the encrypted fallback envelope below."}</div>
+    <div className="connector-status">{relayState === "ready" ? `${sessionSource === "restored" ? "Existing" : "Secure"} relay ready. Missions and events arrive automatically.` : "Local preview has no edge relay. Paste the encrypted fallback envelope below."}</div>
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}

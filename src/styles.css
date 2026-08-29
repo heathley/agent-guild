@@ -274,6 +274,14 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .challenge { background: var(--surface); border: 1px solid var(--line); padding: 12px; font-size: 10px; }
 .connector-flow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 26px 0; color: var(--cyan); }
 .connector-flow span { border: 1px solid var(--line); padding: 12px; color: var(--ice); font: 700 9px "Space Mono", monospace; text-align: center; }
+.pairing-choice { margin: 0; }
+.pairing-choice h3 { margin: 6px 0 8px; font: 700 17px "Space Mono", monospace; }
+.pairing-choice > p:not(.panel-kicker) { color: var(--secondary); font-size: 12px; line-height: 1.6; }
+.pairing-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+.pairing-actions .button { min-height: 48px; justify-content: center; text-align: center; }
+.pairing-actions label.button { cursor: pointer; }
+.pairing-actions label.is-disabled { opacity: .45; cursor: not-allowed; }
+.pairing-actions input[type="file"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .command-box { border: 1px solid var(--line); background: var(--surface); display: flex; align-items: stretch; }
 .command-box code { flex: 1; padding: 14px; font-size: 10px; overflow-x: auto; white-space: nowrap; }
 .command-box button { width: 48px; border: 0; border-left: 1px solid var(--line); background: var(--surface-light); color: var(--cyan); cursor: pointer; }
@@ -338,7 +346,7 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .world-map { grid-template-columns: 1fr; }
   .map-core { grid-column: 1; }
   .station { min-height: 105px; }
-  .card-grid, .mission-columns, .proof-rail, .choice-grid, .form-grid, .local-mission { grid-template-columns: 1fr; }
+  .card-grid, .mission-columns, .proof-rail, .choice-grid, .form-grid, .local-mission, .pairing-actions { grid-template-columns: 1fr; }
   .proof-rail article { border-right: 0; border-bottom: 1px solid var(--line); }
   .proof-rail article:last-child { border-bottom: 0; }
   .honesty-card { align-items: stretch; flex-direction: column; }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { decryptRelayedMission, encryptConnectorEvent, encryptRelayedConnectorEvent } from "../../connector/crypto.js";
 import { ASSIGNMENT_VERSION, BRIDGE_VERSION } from "./contract";
-import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, pairingSessionId, sendRelayAssignment } from "./pairing";
+import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, exportRelayPairing, pairingSessionId, parseRelayPairing, sendRelayAssignment } from "./pairing";
 
 const token = `agp_${"a".repeat(43)}`;
 const agentDid = `did:key:z6Mk${"a".repeat(44)}`;
@@ -20,6 +20,16 @@ describe("browser pairing", () => {
     const encrypted = await encryptRelayedConnectorEvent(pairing, event);
     expect(JSON.stringify(encrypted)).not.toContain(pairing.encryptionKey);
     await expect(decryptRelayedEvent(pairing, { ...encrypted, eventId: event.eventId })).resolves.toEqual(event);
+  });
+
+  it("restores only a current pairing for the same DID and relay", async () => {
+    const pairing = await createRelayPairing("https://guild.test", agentDid);
+    const serialized = exportRelayPairing(pairing);
+    expect(parseRelayPairing(serialized, "https://guild.test", agentDid)).toEqual(pairing);
+    expect(() => parseRelayPairing(serialized, "https://other.test", agentDid)).toThrow(/different relay/);
+    expect(() => parseRelayPairing(serialized, "https://guild.test", `did:key:z6Mk${"b".repeat(44)}`)).toThrow(/different agent DID/);
+    expect(() => parseRelayPairing(JSON.stringify({ ...pairing, prompt: "not allowed" }), "https://guild.test", agentDid)).toThrow(/unsupported fields/);
+    expect(() => parseRelayPairing(JSON.stringify({ ...pairing, signingPublicKey: { ...pairing.signingPublicKey, prompt: "not allowed" } }), "https://guild.test", agentDid)).toThrow(/signing keys/);
   });
 
   it("encrypts a DID-bound mission that the connector can decrypt", async () => {

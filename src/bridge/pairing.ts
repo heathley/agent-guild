@@ -122,6 +122,20 @@ export function exportRelayPairing(pairing: RelayPairingFile): string {
   return JSON.stringify(pairing, null, 2);
 }
 
+export function parseRelayPairing(serialized: string, expectedRelayUrl: string, expectedDid: string): RelayPairingFile {
+  if (new TextEncoder().encode(serialized).length > 16_000) throw new Error("Pairing file is too large.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(serialized); } catch { throw new Error("Pairing file is not valid JSON."); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Pairing file must contain one object.");
+  const allowed = ["agentDid", "createdAt", "encryptionKey", "expiresAt", "relayUrl", "sessionId", "signingPrivateKey", "signingPublicKey", "version"];
+  if (Object.keys(parsed).sort().join(",") !== allowed.join(",")) throw new Error("Pairing file contains unsupported fields.");
+  const pairing = parsed as RelayPairingFile;
+  validateRelayPairing(pairing);
+  if (pairing.agentDid !== expectedDid) throw new Error("This pairing file belongs to a different agent DID.");
+  if (pairing.relayUrl !== new URL(expectedRelayUrl).origin) throw new Error("This pairing file belongs to a different relay.");
+  return pairing;
+}
+
 async function relayAuthHeaders(pairing: RelayPairingFile, method: string, path: string, body: string): Promise<Record<string, string>> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = encode(crypto.getRandomValues(new Uint8Array(18)));
@@ -177,8 +191,23 @@ function validateRelayPairing(pairing: RelayPairingFile): void {
   if (pairing.version !== 2 || !/^[A-Za-z0-9_-]{32}$/.test(pairing.sessionId)) throw new Error("Invalid relay pairing file.");
   if (!/^[A-Za-z0-9_-]{43}$/.test(pairing.encryptionKey)) throw new Error("Invalid relay encryption key.");
   if (pairing.agentDid !== undefined && !/^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/.test(pairing.agentDid)) throw new Error("Invalid paired agent DID.");
-  if (Date.parse(pairing.expiresAt) <= Date.now()) throw new Error("Pairing session expired. Generate a new one.");
-  if (pairing.signingPrivateKey.kty !== "EC" || pairing.signingPublicKey.kty !== "EC") throw new Error("Invalid relay signing keys.");
+  const createdAt = Date.parse(pairing.createdAt);
+  const expiresAt = Date.parse(pairing.expiresAt);
+  if (!Number.isFinite(createdAt) || createdAt > Date.now() + 300_000) throw new Error("Invalid pairing creation time.");
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error("Pairing session expired. Generate a new one.");
+  if (expiresAt > createdAt + 86_700_000) throw new Error("Invalid pairing session duration.");
+  const relay = new URL(pairing.relayUrl);
+  if (pairing.relayUrl !== relay.origin || (relay.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(relay.hostname))) throw new Error("Invalid pairing relay URL.");
+  if (!isPairingJwk(pairing.signingPrivateKey, true) || !isPairingJwk(pairing.signingPublicKey, false)) throw new Error("Invalid relay signing keys.");
+}
+
+function isPairingJwk(value: JsonWebKey, privateKey: boolean): boolean {
+  const allowed = privateKey ? ["crv", "d", "ext", "key_ops", "kty", "x", "y"] : ["crv", "ext", "key_ops", "kty", "x", "y"];
+  return Boolean(value && Object.keys(value).sort().join(",") === allowed.join(",") && value.kty === "EC" && value.crv === "P-256" && value.ext === true &&
+    typeof value.x === "string" && /^[A-Za-z0-9_-]{43}$/.test(value.x) &&
+    typeof value.y === "string" && /^[A-Za-z0-9_-]{43}$/.test(value.y) &&
+    (privateKey ? typeof value.d === "string" && /^[A-Za-z0-9_-]{43}$/.test(value.d) : value.d === undefined) &&
+    Array.isArray(value.key_ops) && value.key_ops.length === 1 && value.key_ops[0] === (privateKey ? "sign" : "verify"));
 }
 
 async function sha256Hex(value: string): Promise<string> {

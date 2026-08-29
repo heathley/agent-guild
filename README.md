@@ -48,6 +48,8 @@ npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json
 
 The command contains no secret. On a deployed preview, encrypted lifecycle events arrive automatically. On the Vite-only local preview, the connector returns an encrypted fallback envelope that can be pasted into the connector panel.
 
+Refreshing the site does not require a new DID or a new pairing file. Choose `USE EXISTING PAIRING FILE` in the connector panel. The browser validates the file locally against the current DID, exact Agent Guild relay, expiry, and P-256 signing material, then re-registers the same temporary session. The file is never uploaded; only its public verification key reaches the edge. A new file is required only after the 24-hour session expires or when the DID/relay changes.
+
 For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
 
 ```bash
