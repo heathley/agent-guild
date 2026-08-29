@@ -299,7 +299,7 @@ function App() {
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onCreated={(value) => { setIdentity(value); setExternalDid(""); setIdentityOpen(false); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
-      {pairOpen ? <ConnectorModal did={connectedDid} onClose={() => setPairOpen(false)} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
     </div>
   );
@@ -511,7 +511,7 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   </Modal>;
 }
 
-function ConnectorModal({ did, onClose, onEvent }: { did: string | null; onClose: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+function ConnectorModal({ did, onClose, onNeedIdentity, onEvent }: { did: string | null; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [token] = useState(createPairToken);
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
   const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">("preparing");
@@ -577,7 +577,7 @@ function ConnectorModal({ did, onClose, onEvent }: { did: string | null; onClose
   }
 
   if (!did) return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
-    <div className="empty-state"><KeyRound /><div><strong>Set up identity first</strong><p>Create a local DID or prove control of an existing signer before generating a pairing session.</p></div></div>
+    <EmptyState icon={<KeyRound />} title="Set up identity first" detail="Create a local DID, restore its encrypted backup, or prove control of an existing signer before generating a pairing session." action="SET UP OR RESTORE IDENTITY" onAction={onNeedIdentity} />
   </Modal>;
 
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
