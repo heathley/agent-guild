@@ -893,14 +893,16 @@ function moodForEvent(event: AgentBridgeEvent["event"]): MascotMood {
   return "proud";
 }
 function Mascot({ mood, alt, compact = false }: { mood: MascotMood; alt?: string; compact?: boolean }) {
+  const signal = mood === "scanning" ? <Search />
+    : mood === "focused" ? <Eye />
+    : mood === "working" ? <Code2 />
+    : mood === "blocked" ? <CircleAlert />
+    : mood === "social" ? <Users />
+    : mood === "proud" ? <Check />
+    : null;
   return <div className={`mascot-art mascot-art-${compact ? "compact" : "full"} mood-${mood}`}>
     <img src={mascotAsset} alt={alt || ""} />
-    <span className="digital-face" aria-hidden="true">
-      <span className="face-eye face-eye-left" />
-      <span className="face-eye face-eye-right" />
-      <span className="face-mouth" />
-      <span className="face-scan" />
-    </span>
+    {signal ? <span className="mascot-signal" aria-hidden="true">{signal}</span> : null}
   </div>;
 }
 function download(name: string, text: string) {

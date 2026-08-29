@@ -68,31 +68,11 @@ h1 em { color: var(--cyan); font-style: normal; }
 .mascot-frame .mascot-art { width: 100%; animation: mascot-breathe 3.2s ease-in-out infinite; }
 .mascot-art { position: relative; aspect-ratio: 1199 / 1312; container-type: inline-size; transform-origin: 50% 90%; }
 .mascot-art img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.digital-face { position: absolute; left: 27%; top: 17.2%; width: 46%; height: 22.5%; overflow: hidden; border-radius: 24% 24% 30% 30%; background: #01040a; box-shadow: inset 0 0 0 1px rgba(0,180,216,.16); }
-.face-eye { position: absolute; top: 38%; width: 7%; height: 25%; border-radius: 999px; background: var(--cyan); box-shadow: 0 0 1.8cqw rgba(0,180,216,.7); transition: width .2s, height .2s, top .2s, transform .2s, border .2s; }
-.face-eye-left { left: 29%; }
-.face-eye-right { right: 29%; }
-.face-mouth { position: absolute; left: 43%; top: 65%; width: 14%; height: 9%; border-bottom: max(1px, .7cqw) solid var(--cyan); border-radius: 0 0 999px 999px; transition: width .2s, left .2s, top .2s, border .2s, transform .2s; }
-.face-scan { position: absolute; inset: 5% 0 auto; height: 1px; background: var(--cyan); opacity: 0; box-shadow: 0 0 1.5cqw var(--cyan); }
-.mood-scanning .face-eye { width: 13%; height: 8%; top: 47%; border-radius: 1px; animation: face-look 1.8s ease-in-out infinite; }
-.mood-scanning .face-mouth { width: 8%; left: 46%; }
-.mood-scanning .face-scan { opacity: .8; animation: face-scan 1.8s linear infinite; }
-.mood-focused .face-eye { width: 15%; height: 6%; top: 46%; border-radius: 1px; }
-.mood-focused .face-eye-left { transform: rotate(8deg); }
-.mood-focused .face-eye-right { transform: rotate(-8deg); }
-.mood-focused .face-mouth { width: 10%; left: 45%; top: 67%; border-radius: 0; }
-.mood-working .face-eye { width: 7%; height: 24%; animation: face-compute 1.15s steps(2) infinite; }
-.mood-working .face-mouth { width: 5%; left: 47.5%; border-radius: 0; }
-.mood-working .face-scan { opacity: .55; animation: face-scan 1.25s linear infinite; }
-.mood-blocked .face-eye { width: 14%; height: 6%; top: 47%; border-radius: 1px; }
-.mood-blocked .face-eye-left { transform: rotate(-10deg); }
-.mood-blocked .face-eye-right { transform: rotate(10deg); }
-.mood-blocked .face-mouth { top: 69%; border-bottom: 0; border-top: max(1px, .7cqw) solid var(--cyan); border-radius: 999px 999px 0 0; }
-.mood-social .face-eye, .mood-proud .face-eye { top: 43%; width: 15%; height: 15%; background: transparent; border-top: max(1px, 1cqw) solid var(--cyan); border-radius: 50% 50% 0 0; box-shadow: none; }
-.mood-social .face-mouth, .mood-proud .face-mouth { left: 40%; width: 20%; top: 63%; }
-.mood-social .face-eye { animation: face-happy .9s ease-in-out infinite alternate; }
-.mood-proud .digital-face { box-shadow: inset 0 0 0 1px var(--green), 0 0 2cqw rgba(50,215,75,.22); }
-.mood-proud .face-eye, .mood-proud .face-mouth { border-color: var(--green); }
+.mascot-signal { --signal: var(--cyan); position: absolute; top: 17%; right: 7%; width: clamp(13px, 9cqw, 42px); aspect-ratio: 1; display: grid; place-items: center; color: var(--signal); background: rgba(10,17,40,.94); border: 1px solid var(--signal); box-shadow: 0 0 clamp(3px, 1.2cqw, 8px) rgba(0,180,216,.25); animation: mascot-signal-in .24s ease-out both; }
+.mascot-signal svg { width: 58%; height: 58%; stroke-width: 2; }
+.mood-working .mascot-signal::after { content: ""; position: absolute; right: -45%; top: 18%; width: 12%; aspect-ratio: 1; background: var(--cyan); box-shadow: 0 1.5cqw 0 rgba(0,180,216,.72), 1.2cqw 3cqw 0 rgba(0,180,216,.42); animation: mascot-pixels 1.1s steps(3) infinite; }
+.mood-social .mascot-signal { border-radius: 50%; animation: mascot-signal-in .24s ease-out both, mascot-signal-ring 1.8s ease-out infinite; }
+.mood-proud .mascot-signal { --signal: var(--green); box-shadow: 0 0 clamp(3px, 1.2cqw, 8px) rgba(50,215,75,.25); }
 .mascot-status { position: absolute; z-index: 2; bottom: 8%; right: 0; background: var(--surface); border: 1px solid var(--line); padding: 12px 14px; font: 700 10px "Space Mono", monospace; letter-spacing: .08em; display: flex; align-items: center; gap: 8px; }
 .mascot-status span { width: 8px; height: 8px; background: var(--green); animation: status-blink 2s steps(2) infinite; }
 
@@ -337,13 +317,25 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 
 @keyframes mascot-breathe { 0%,100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-5px) scaleY(1.008); } }
 @keyframes mascot-walk { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-4px) rotate(1deg); } }
-@keyframes face-look { 0%,100% { transform: translateX(-12%); } 50% { transform: translateX(12%); } }
-@keyframes face-scan { from { top: 8%; } to { top: 90%; } }
-@keyframes face-compute { 50% { height: 8%; top: 47%; } }
-@keyframes face-happy { to { transform: translateY(-8%); } }
+@keyframes mascot-scan-body { 0%,100% { transform: translateX(-1.5%) rotate(-.7deg); } 50% { transform: translateX(1.5%) rotate(.7deg); } }
+@keyframes mascot-focus-body { 0%,100% { transform: scale(1); } 50% { transform: scale(1.012); } }
+@keyframes mascot-compute-body { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+@keyframes mascot-blocked-body { 0%,100% { transform: translateY(2px) rotate(-1deg); } 50% { transform: translateY(0) rotate(1deg); } }
+@keyframes mascot-social-body { 0%,100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg); } }
+@keyframes mascot-proud-body { 0%,100% { transform: translateY(0); } 35% { transform: translateY(-5px); } }
+@keyframes mascot-signal-in { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
+@keyframes mascot-pixels { 50% { opacity: .38; transform: translate(15%, -10%); } }
+@keyframes mascot-signal-ring { 75%,100% { box-shadow: 0 0 0 clamp(4px, 1.5cqw, 9px) rgba(0,180,216,0); } }
 @keyframes status-blink { 50% { opacity: .35; } }
 @keyframes station-pulse { 50% { background: var(--ice); } }
 @keyframes status-spin { to { transform: rotate(360deg); } }
+
+.mascot-frame .mood-scanning, .map-mascot .mood-scanning { animation: mascot-scan-body 2.2s ease-in-out infinite; }
+.mascot-frame .mood-focused, .map-mascot .mood-focused { animation: mascot-focus-body 2.4s ease-in-out infinite; }
+.mascot-frame .mood-working, .map-mascot .mood-working { animation: mascot-compute-body .72s ease-in-out infinite alternate; }
+.mascot-frame .mood-blocked, .map-mascot .mood-blocked { animation: mascot-blocked-body 2.4s ease-in-out infinite; }
+.mascot-frame .mood-social, .map-mascot .mood-social { animation: mascot-social-body 1.8s ease-in-out infinite; }
+.mascot-frame .mood-proud, .map-mascot .mood-proud { animation: mascot-proud-body 1.35s ease-in-out infinite; }
 
 @media (max-width: 980px) {
   .site-header nav { display: none; }
