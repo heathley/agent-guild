@@ -7,10 +7,10 @@ import {
 import mascotAsset from "./assets/flop-mascot-preview.png";
 import {
   createPairToken, createRelayPairing, decryptConnectorEvent, decryptRelayedEvent,
-  exportRelayPairing, pollRelayEvents, registerRelayPairing,
+  exportRelayPairing, pollRelayEvents, registerRelayPairing, sendRelayAssignment,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
-import type { AgentBridgeEvent } from "./bridge/contract";
+import { ASSIGNMENT_VERSION, type AgentBridgeEvent, type MissionAssignment } from "./bridge/contract";
 import {
   fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
   type PublicRoom, type RoomWindow,
@@ -64,11 +64,14 @@ function App() {
   const [station, setStation] = useState<Station>("spot");
   const [identityOpen, setIdentityOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
+  const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
+  const [handoffStatus, setHandoffStatus] = useState("");
   const [proofOpen, setProofOpen] = useState(false);
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
   const roomRequest = useRef(0);
   const kibbleRequest = useRef(0);
+  const relayCursor = useRef(0);
 
   const connectedDid = identity?.did || externalDid || null;
   const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
@@ -86,6 +89,40 @@ function App() {
     }).catch(() => undefined);
     void refreshTechnocore();
   }, []);
+
+  useEffect(() => {
+    if (!pairing) return;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const events = await pollRelayEvents(pairing, relayCursor.current);
+        for (const item of events) {
+          const event = await decryptRelayedEvent(pairing, item.envelope);
+          relayCursor.current = Math.max(relayCursor.current, item.seq);
+          if (connectedDid && event.identity.did !== connectedDid) {
+            setHandoffStatus("Agent event rejected: its DID does not match this identity.");
+            continue;
+          }
+          await handleAgentEvent(event);
+          if (event.event === "mission.selected") setHandoffStatus("Your agent received the mission and confirmed its finish line.");
+          if (["mission.researching", "mission.building", "mission.testing"].includes(event.event)) setHandoffStatus(`Agent update: ${event.event.split(".")[1]}. This is activity—not proof yet.`);
+        }
+      } catch (error) {
+        if (!stopped) setHandoffStatus(error instanceof Error ? error.message : "The encrypted agent relay could not be read.");
+      }
+      if (!stopped) window.setTimeout(poll, 1600);
+    };
+    void poll();
+    return () => { stopped = true; };
+  }, [connectedDid, pairing]);
+
+  useEffect(() => {
+    if (pairing?.agentDid && pairing.agentDid !== connectedDid) {
+      relayCursor.current = 0;
+      setPairing(null);
+      setHandoffStatus("Identity changed. Create a fresh DID-bound pairing session.");
+    }
+  }, [connectedDid, pairing]);
 
   useEffect(() => {
     if (sourceTab === "kibble" && kibbleFeed.status === "idle") void refreshKibble();
@@ -160,6 +197,46 @@ function App() {
       });
     }
     setStation(stationForEvent(event.event));
+  }
+
+  async function startInAgent() {
+    if (!activeMission) return;
+    if (!connectedDid) {
+      setHandoffStatus("Set up or restore an identity before sending a mission.");
+      setIdentityOpen(true);
+      return;
+    }
+    if (!pairing) {
+      setHandoffStatus("Connect your agent first. Download the temporary pairing file and start the connector.");
+      setPairOpen(true);
+      return;
+    }
+    const now = Date.now();
+    const assignment: MissionAssignment = {
+      version: ASSIGNMENT_VERSION,
+      assignmentId: crypto.randomUUID(),
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
+      agentDid: connectedDid,
+      mission: {
+        id: activeMission.id,
+        source: activeMission.source,
+        title: activeMission.title,
+        summary: activeMission.summary,
+        successCriteria: activeMission.successCriteria,
+        verification: activeMission.verification,
+        risk: activeMission.risk,
+        ...(activeMission.room ? { room: activeMission.room } : {}),
+      },
+      publicActions: "human-approval-required",
+    };
+    setHandoffStatus("Encrypting the mission for your paired agent…");
+    try {
+      const seq = await sendRelayAssignment(pairing, assignment);
+      setHandoffStatus(`Mission placed in the encrypted agent inbox (sequence ${seq}). Call guild_status in your agent to receive it.`);
+    } catch (error) {
+      setHandoffStatus(error instanceof Error ? error.message : "Mission handoff failed.");
+    }
   }
 
   function addLocalMission() {
@@ -268,10 +345,11 @@ function App() {
               <p>{activeMission.summary}</p>
               <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
               <div className="mission-actions">
-                <button className="button button-primary" onClick={() => setStation("make")}><Code2 size={16} /> START IN MY AGENT</button>
+                <button className="button button-primary" onClick={() => void startInAgent()}><Code2 size={16} /> START IN MY AGENT</button>
                 <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECTOR SETUP</button>
                 <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
+              {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
             </div>
           ) : null}
         </section>
@@ -299,7 +377,7 @@ function App() {
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
-      {pairOpen ? <ConnectorModal did={connectedDid} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} onPairingReady={(value) => { relayCursor.current = 0; setPairing(value); setHandoffStatus("Secure relay ready. Your agent can now receive encrypted missions."); }} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
     </div>
   );
@@ -519,64 +597,39 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
   </Modal>;
 }
 
-function ConnectorModal({ did, onClose, onNeedIdentity, onEvent }: { did: string | null; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [token] = useState(createPairToken);
-  const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
-  const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">("preparing");
-  const cursor = useRef(0);
+  const [session, setSession] = useState<RelayPairingFile | null>(pairing);
+  const [relayState, setRelayState] = useState<"preparing" | "ready" | "manual">(pairing ? "ready" : "preparing");
   const command = "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
   const [copied, setCopied] = useState(false);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    if (!did) return;
+    if (!did || session) return;
     let cancelled = false;
     void createRelayPairing(edgeOrigin(), did).then(async (created) => {
       if (cancelled) return;
-      setPairing(created);
+      setSession(created);
       try {
         await registerRelayPairing(created);
-        if (!cancelled) setRelayState("ready");
+        if (!cancelled) {
+          setRelayState("ready");
+          onPairingReady(created);
+        }
       } catch {
         if (!cancelled) setRelayState("manual");
       }
     });
     return () => { cancelled = true; };
-  }, [did]);
-
-  useEffect(() => {
-    if (!pairing || relayState !== "ready") return;
-    let stopped = false;
-    const poll = async () => {
-      try {
-        const events = await pollRelayEvents(pairing, cursor.current);
-        for (const item of events) {
-          const event = await decryptRelayedEvent(pairing, item.envelope);
-          if (stopped) return;
-          if (did && event.identity.did !== did) {
-            setStatus("Event rejected: paired agent DID does not match this local identity.");
-            cursor.current = Math.max(cursor.current, item.seq);
-            continue;
-          }
-          onEvent(event);
-          cursor.current = Math.max(cursor.current, item.seq);
-          setStatus(`${event.event} received securely · ${event.eventId.slice(0, 8)}`);
-        }
-      } catch {
-        if (!stopped) setRelayState("manual");
-      }
-    };
-    void poll();
-    const interval = window.setInterval(() => void poll(), 2500);
-    return () => { stopped = true; window.clearInterval(interval); };
-  }, [did, onEvent, pairing, relayState]);
+  }, [did, onPairingReady, session]);
 
   async function importEvent() {
     try {
       const parsed = JSON.parse(envelope) as { envelope?: EncryptedEventEnvelope } & Partial<EncryptedEventEnvelope>;
       const encrypted = parsed.envelope || parsed as EncryptedEventEnvelope;
-      const event = pairing ? await decryptRelayedEvent(pairing, encrypted) : await decryptConnectorEvent(token, encrypted);
+      const event = session ? await decryptRelayedEvent(session, encrypted) : await decryptConnectorEvent(token, encrypted);
       if (did && event.identity.did !== did) throw new Error("Paired agent DID does not match this local identity.");
       onEvent(event);
       setStatus(`${event.event} accepted · ${event.eventId.slice(0, 8)}`);
@@ -594,7 +647,7 @@ function ConnectorModal({ did, onClose, onNeedIdentity, onEvent }: { did: string
     <p className="panel-kicker">ONE-TIME ENCRYPTED PAIRING FILE</p>
     <p className="fine-print">BOUND AGENT DID · <code>{shortDid(did)}</code></p>
     <p className="fine-print">The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events. Keep the file local and delete it after pairing.</p>
-    <button className="button button-primary full" disabled={!pairing} onClick={() => pairing && download("agent-guild-pairing.json", exportRelayPairing(pairing))}>DOWNLOAD PAIRING FILE</button>
+    <button className="button button-primary full" disabled={!session} onClick={() => session && download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD PAIRING FILE</button>
     <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>
     <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>

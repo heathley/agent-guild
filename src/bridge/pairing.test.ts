@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { encryptConnectorEvent, encryptRelayedConnectorEvent } from "../../connector/crypto.js";
-import { BRIDGE_VERSION } from "./contract";
-import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, pairingSessionId } from "./pairing";
+import { describe, expect, it, vi } from "vitest";
+import { decryptRelayedMission, encryptConnectorEvent, encryptRelayedConnectorEvent } from "../../connector/crypto.js";
+import { ASSIGNMENT_VERSION, BRIDGE_VERSION } from "./contract";
+import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, pairingSessionId, sendRelayAssignment } from "./pairing";
 
 const token = `agp_${"a".repeat(43)}`;
 const agentDid = `did:key:z6Mk${"a".repeat(44)}`;
@@ -20,5 +20,30 @@ describe("browser pairing", () => {
     const encrypted = await encryptRelayedConnectorEvent(pairing, event);
     expect(JSON.stringify(encrypted)).not.toContain(pairing.encryptionKey);
     await expect(decryptRelayedEvent(pairing, { ...encrypted, eventId: event.eventId })).resolves.toEqual(event);
+  });
+
+  it("encrypts a DID-bound mission that the connector can decrypt", async () => {
+    const pairing = await createRelayPairing("https://guild.test", agentDid);
+    let posted: { eventId: string; envelope: { version: 1; eventId: string; iv: string; ciphertext: string } } | undefined;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      posted = JSON.parse(init?.body as string);
+      return new Response(JSON.stringify({ accepted: true, seq: 1 }), { status: 201, headers: { "content-type": "application/json" } });
+    });
+    const now = Date.now();
+    const assignment = {
+      version: ASSIGNMENT_VERSION, assignmentId: "assignment_1234",
+      createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 60_000).toISOString(), agentDid,
+      mission: { id: "local:1", source: "local", title: "Connector check", summary: "Receive one safe mission.", successCriteria: ["Agent acknowledges it"], verification: "Observe lifecycle events.", risk: "low", prompt: "not allowed" },
+      publicActions: "human-approval-required",
+    };
+    try {
+      await expect(sendRelayAssignment(pairing, assignment)).resolves.toBe(1);
+      expect(JSON.stringify(posted)).not.toContain("Connector check");
+      const decrypted = await decryptRelayedMission(pairing, { seq: 1, envelope: posted!.envelope });
+      expect(decrypted.mission.title).toBe("Connector check");
+      expect(decrypted.mission).not.toHaveProperty("prompt");
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });

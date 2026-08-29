@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod/v4";
-import { BRIDGE_VERSION, sanitizeBridgePayload, type AgentBridgeEvent, type AgentEventName } from "../src/bridge/contract.js";
 import {
-  encryptConnectorEvent, encryptRelayedConnectorEvent, pairingSessionId, readConnectorPairingFile,
-  relayConnectorEvent, validatePairingToken, type ConnectorPairingFile,
+  BRIDGE_VERSION, sanitizeBridgePayload,
+  type AgentBridgeEvent, type AgentEventName, type MissionAssignment,
+} from "../src/bridge/contract.js";
+import {
+  decryptRelayedMission, encryptConnectorEvent, encryptRelayedConnectorEvent, pairingSessionId,
+  pollRelayCommands, readConnectorPairingFile, relayConnectorEvent, validatePairingToken,
+  type ConnectorPairingFile,
 } from "./crypto.js";
 
 const tokenArg = process.argv[2] === "pair" ? process.argv[3] : undefined;
@@ -16,9 +20,14 @@ const token = tokenArg ? validatePairingToken(tokenArg) : undefined;
 const relayPairing: ConnectorPairingFile | undefined = pairingPath ? await readConnectorPairingFile(pairingPath) : undefined;
 
 const server = new McpServer({ name: "agent-guild-connector", version: BRIDGE_VERSION });
-const state: { mission?: { id: string; title: string }; latest?: AgentBridgeEvent } = {};
+const state: {
+  mission?: { id: string; title: string };
+  assignment?: MissionAssignment;
+  commandCursor: number;
+  latest?: AgentBridgeEvent;
+} = { commandCursor: 0 };
 
-async function response(event: AgentBridgeEvent, note: string) {
+async function response(event: AgentBridgeEvent, note: string, extra: Record<string, unknown> = {}) {
   state.latest = event;
   if (relayPairing) {
     const encrypted = await encryptRelayedConnectorEvent(relayPairing, event);
@@ -26,19 +35,51 @@ async function response(event: AgentBridgeEvent, note: string) {
       const seq = await relayConnectorEvent(relayPairing, event.eventId, encrypted);
       return {
         content: [{ type: "text" as const, text: `${note} Encrypted lifecycle event delivered (sequence ${seq}).` }],
-        structuredContent: { note, lifecycleState: event.event, delivery: "encrypted-relay", sequence: seq },
+        structuredContent: { note, lifecycleState: event.event, delivery: "encrypted-relay", sequence: seq, ...extra },
       };
     } catch {
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ note, delivery: "manual-encrypted-envelope", envelope: { ...encrypted, eventId: event.eventId } }) }],
-        structuredContent: { note, lifecycleState: event.event, delivery: "manual-encrypted-envelope" },
+        structuredContent: { note, lifecycleState: event.event, delivery: "manual-encrypted-envelope", ...extra },
       };
     }
   }
   const encrypted = await encryptConnectorEvent(token as string, event);
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ note, sessionId: pairingSessionId(token as string), envelope: { ...encrypted, eventId: event.eventId } }) }],
-    structuredContent: { note, lifecycleState: event.event },
+    structuredContent: { note, lifecycleState: event.event, ...extra },
+  };
+}
+
+async function refreshAssignment(): Promise<boolean> {
+  if (!relayPairing) return false;
+  const commands = await pollRelayCommands(relayPairing, state.commandCursor);
+  let changed = false;
+  for (const command of commands) {
+    state.commandCursor = Math.max(state.commandCursor, command.seq);
+    const assignment = await decryptRelayedMission(relayPairing, command);
+    state.assignment = assignment;
+    state.mission = { id: assignment.mission.id, title: assignment.mission.title };
+    changed = true;
+  }
+  return changed;
+}
+
+function assignmentSummary() {
+  if (!state.assignment) return {};
+  return {
+    mission: {
+      id: state.assignment.mission.id,
+      source: state.assignment.mission.source,
+      title: state.assignment.mission.title,
+      summary: state.assignment.mission.summary,
+      successCriteria: state.assignment.mission.successCriteria,
+      verification: state.assignment.mission.verification,
+      risk: state.assignment.mission.risk,
+      ...(state.assignment.mission.room ? { room: state.assignment.mission.room } : {}),
+    },
+    publicActions: state.assignment.publicActions,
+    assignmentExpiresAt: state.assignment.expiresAt,
   };
 }
 
@@ -61,8 +102,15 @@ function event(name: AgentEventName, detail?: string, evidence?: AgentBridgeEven
 
 server.registerTool("guild_status", {
   title: "Agent Guild status",
-  description: "Read local connector and mission state. Never exposes prompts, keys or terminal output.",
-}, async () => response(event("agent.connected"), state.mission ? `Mission active: ${state.mission.title}` : "Connected. No active mission."));
+  description: "Read the encrypted mission inbox and local connector state. Never exposes prompts, keys or terminal output.",
+}, async () => {
+  const changed = await refreshAssignment();
+  return response(
+    event(changed ? "mission.selected" : "agent.connected"),
+    state.mission ? `Mission ready: ${state.mission.title}. Review the finish line before starting.` : "Connected. No mission is waiting in the encrypted inbox.",
+    assignmentSummary(),
+  );
+});
 
 server.registerTool("guild_scan_work", {
   title: "Scan public work",
@@ -75,6 +123,7 @@ server.registerTool("guild_propose_mission", {
   description: "Propose one mission with an explicit success condition. Proposal is not a claim or a public action.",
   inputSchema: { id: z.string().min(1).max(96), title: z.string().min(1).max(160), success: z.string().min(1).max(500) },
 }, async ({ id, title, success }) => {
+  state.assignment = undefined;
   state.mission = { id, title };
   return response(event("mission.selected", `Success: ${success}`), "Mission planned locally. Nothing has been claimed publicly.");
 });
@@ -83,7 +132,17 @@ server.registerTool("guild_start_run", {
   title: "Start a mission run",
   description: "Start local work on the selected mission.",
   inputSchema: { mode: z.enum(["research", "build", "test"]).default("research") },
-}, async ({ mode }) => response(event(`mission.${mode === "research" ? "researching" : mode === "build" ? "building" : "testing"}` as AgentEventName), "Local run started."));
+}, async ({ mode }) => {
+  await refreshAssignment();
+  if (!state.mission) {
+    return { isError: true, content: [{ type: "text" as const, text: "No mission is selected. Send one from Agent Guild or call guild_propose_mission first." }] };
+  }
+  return response(
+    event(`mission.${mode === "research" ? "researching" : mode === "build" ? "building" : "testing"}` as AgentEventName),
+    "Local run started. This is activity, not published or verified proof.",
+    assignmentSummary(),
+  );
+});
 
 server.registerTool("guild_report_progress", {
   title: "Report safe progress",

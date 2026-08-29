@@ -1,4 +1,7 @@
-import { sanitizeBridgePayload, type AgentBridgeEvent } from "./contract.js";
+import {
+  sanitizeBridgePayload, sanitizeMissionAssignment,
+  type AgentBridgeEvent, type MissionAssignment,
+} from "./contract.js";
 
 export type EncryptedEventEnvelope = { version: 1; eventId: string; iv: string; ciphertext: string };
 
@@ -83,17 +86,33 @@ export async function pollRelayEvents(pairing: RelayPairingFile, after: number):
   return Array.isArray(data.events) ? data.events : [];
 }
 
-export async function decryptRelayedEvent(pairing: RelayPairingFile, envelope: EncryptedEventEnvelope): Promise<AgentBridgeEvent> {
+export async function sendRelayAssignment(pairing: RelayPairingFile, input: unknown): Promise<number> {
   validateRelayPairing(pairing);
-  const rawKey = decode(pairing.encryptionKey);
-  const key = await crypto.subtle.importKey("raw", bufferOf(rawKey), "AES-GCM", false, ["decrypt"]);
-  rawKey.fill(0);
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: bufferOf(decode(envelope.iv)) },
-    key,
-    bufferOf(decode(envelope.ciphertext)),
-  );
-  const event = sanitizeBridgePayload(JSON.parse(new TextDecoder().decode(plaintext)));
+  const assignment = sanitizeMissionAssignment(input);
+  if (!assignment) throw new Error("Mission assignment failed the strict bridge allowlist.");
+  if (assignment.agentDid !== pairing.agentDid) throw new Error("Mission assignment DID does not match this pairing session.");
+  const envelope = await encryptRelayPayload(pairing, assignment, assignment.assignmentId);
+  const path = `/api/pairing/${pairing.sessionId}/commands`;
+  const body = JSON.stringify({ eventId: assignment.assignmentId, envelope });
+  const headers = await relayAuthHeaders(pairing, "POST", path, body);
+  const response = await fetch(`${pairing.relayUrl}${path}`, {
+    method: "POST", headers: { ...headers, "content-type": "application/json" }, body,
+  });
+  if (!response.ok) throw new Error(`Encrypted mission handoff was rejected (${response.status}).`);
+  const result = await response.json() as { seq?: number };
+  if (!Number.isInteger(result.seq)) throw new Error("Encrypted relay returned an invalid mission receipt.");
+  return result.seq as number;
+}
+
+export async function decryptMissionAssignment(pairing: RelayPairingFile, envelope: EncryptedEventEnvelope): Promise<MissionAssignment> {
+  const value = await decryptRelayPayload(pairing, envelope);
+  const assignment = sanitizeMissionAssignment(value);
+  if (!assignment || assignment.assignmentId !== envelope.eventId) throw new Error("Encrypted mission failed the bridge allowlist.");
+  return assignment;
+}
+
+export async function decryptRelayedEvent(pairing: RelayPairingFile, envelope: EncryptedEventEnvelope): Promise<AgentBridgeEvent> {
+  const event = sanitizeBridgePayload(await decryptRelayPayload(pairing, envelope));
   if (!event || event.eventId !== envelope.eventId) throw new Error("Encrypted event failed the bridge allowlist.");
   return event;
 }
@@ -125,6 +144,33 @@ async function relayAuthHeaders(pairing: RelayPairingFile, method: string, path:
     "x-ag-nonce": nonce,
     "x-ag-signature": encode(new Uint8Array(signature)),
   };
+}
+
+async function encryptRelayPayload(pairing: RelayPairingFile, value: unknown, eventId: string): Promise<EncryptedEventEnvelope> {
+  validateRelayPairing(pairing);
+  const rawKey = decode(pairing.encryptionKey);
+  const key = await crypto.subtle.importKey("raw", bufferOf(rawKey), "AES-GCM", false, ["encrypt"]);
+  rawKey.fill(0);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(value));
+  try {
+    const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: bufferOf(iv) }, key, plaintext);
+    return { version: 1, eventId, iv: encode(iv), ciphertext: encode(new Uint8Array(ciphertext)) };
+  } finally {
+    plaintext.fill(0);
+  }
+}
+
+async function decryptRelayPayload(pairing: RelayPairingFile, envelope: EncryptedEventEnvelope): Promise<unknown> {
+  validateRelayPairing(pairing);
+  if (envelope.version !== 1 || !envelope.eventId || !envelope.iv || !envelope.ciphertext) throw new Error("Invalid encrypted relay envelope.");
+  const rawKey = decode(pairing.encryptionKey);
+  const key = await crypto.subtle.importKey("raw", bufferOf(rawKey), "AES-GCM", false, ["decrypt"]);
+  rawKey.fill(0);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: bufferOf(decode(envelope.iv)) }, key, bufferOf(decode(envelope.ciphertext)),
+  );
+  return JSON.parse(new TextDecoder().decode(plaintext));
 }
 
 function validateRelayPairing(pairing: RelayPairingFile): void {

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, webcrypto } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { sanitizeMissionAssignment, type MissionAssignment } from "../src/bridge/contract.js";
 
 export type EncryptedConnectorEvent = {
   version: 1;
@@ -18,6 +19,8 @@ export type ConnectorPairingFile = {
   createdAt: string;
   expiresAt: string;
 };
+
+export type RelayedCommand = { seq: number; envelope: EncryptedConnectorEvent & { eventId: string } };
 
 export function validatePairingToken(token: string): string {
   if (!/^agp_[A-Za-z0-9_-]{43}$/.test(token)) {
@@ -79,6 +82,36 @@ export async function relayConnectorEvent(pairing: ConnectorPairingFile, eventId
   const result = await response.json() as { seq?: number };
   if (!Number.isInteger(result.seq)) throw new Error("Encrypted relay returned an invalid receipt.");
   return result.seq as number;
+}
+
+export async function pollRelayCommands(pairing: ConnectorPairingFile, after: number): Promise<RelayedCommand[]> {
+  validateConnectorPairing(pairing);
+  const path = `/api/pairing/${pairing.sessionId}/commands?after=${Math.max(0, Math.trunc(after))}`;
+  const headers = await connectorAuthHeaders(pairing, "GET", path, "");
+  const response = await fetch(`${pairing.relayUrl}${path}`, { headers });
+  if (!response.ok) throw new Error(`Encrypted mission inbox could not be read (${response.status}).`);
+  const result = await response.json() as { events?: RelayedCommand[] };
+  return Array.isArray(result.events) ? result.events : [];
+}
+
+export async function decryptRelayedMission(pairing: ConnectorPairingFile, command: RelayedCommand): Promise<MissionAssignment> {
+  validateConnectorPairing(pairing);
+  const envelope = command.envelope;
+  if (envelope.version !== 1 || envelope.eventId.length < 8) throw new Error("Encrypted mission envelope is malformed.");
+  const keyBytes = Buffer.from(pairing.encryptionKey, "base64url");
+  const key = await webcrypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+  try {
+    const plaintext = await webcrypto.subtle.decrypt(
+      { name: "AES-GCM", iv: Buffer.from(envelope.iv, "base64url") }, key, Buffer.from(envelope.ciphertext, "base64url"),
+    );
+    const assignment = sanitizeMissionAssignment(JSON.parse(new TextDecoder().decode(plaintext)));
+    if (!assignment || assignment.assignmentId !== envelope.eventId) throw new Error("Mission assignment failed the strict allowlist.");
+    if (assignment.agentDid !== pairing.agentDid) throw new Error("Mission assignment DID does not match the paired agent.");
+    if (Date.parse(assignment.expiresAt) <= Date.now()) throw new Error("Mission assignment expired.");
+    return assignment;
+  } finally {
+    keyBytes.fill(0);
+  }
 }
 
 function validateConnectorPairing(pairing: ConnectorPairingFile): void {

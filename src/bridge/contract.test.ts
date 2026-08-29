@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BRIDGE_VERSION, isAgentBridgeEvent, sanitizeBridgePayload } from "./contract";
+import { ASSIGNMENT_VERSION, BRIDGE_VERSION, isAgentBridgeEvent, sanitizeBridgePayload, sanitizeMissionAssignment } from "./contract";
 
 const event = {
   version: BRIDGE_VERSION,
@@ -22,5 +22,36 @@ describe("Agent Bridge contract", () => {
 
   it("rejects arbitrary input instead of trying to redact unknown fields", () => {
     expect(sanitizeBridgePayload({ token: "never-export-this", nested: { test: "passed" } })).toBeNull();
+  });
+
+  it("rebuilds mission assignments from a strict allowlist", () => {
+    const assignment = {
+      version: ASSIGNMENT_VERSION,
+      assignmentId: "assignment_1234",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      expiresAt: "2026-08-29T00:30:00.000Z",
+      agentDid: `did:key:z6Mk${"a".repeat(44)}`,
+      mission: {
+        id: "local:1", source: "local", title: "Check one flow", summary: "Confirm the connector handoff.",
+        successCriteria: ["The agent acknowledges the exact mission"], verification: "Observe signed relay lifecycle events.", risk: "low",
+        prompt: "must not cross the bridge",
+      },
+      publicActions: "human-approval-required",
+      environment: { SECRET: "must not cross the bridge" },
+    };
+    const safe = sanitizeMissionAssignment(assignment);
+    expect(safe).not.toHaveProperty("environment");
+    expect(safe?.mission).not.toHaveProperty("prompt");
+    expect(safe?.publicActions).toBe("human-approval-required");
+  });
+
+  it("rejects an assignment for an invalid DID or without a finish line", () => {
+    const assignment = {
+      version: ASSIGNMENT_VERSION, assignmentId: "assignment_1234",
+      createdAt: "2026-08-29T00:00:00.000Z", expiresAt: "2026-08-29T00:30:00.000Z", agentDid: "did:key:wrong",
+      mission: { id: "1", source: "local", title: "A", summary: "B", successCriteria: [], verification: "C", risk: "low" },
+      publicActions: "human-approval-required",
+    };
+    expect(sanitizeMissionAssignment(assignment)).toBeNull();
   });
 });

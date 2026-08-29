@@ -48,6 +48,31 @@ describe("edge worker", () => {
     expect((await session.fetch(request.clone())).status).toBe(401);
     expect(JSON.stringify(await storage.get("events"))).not.toContain("signingPrivateKey");
   });
+
+  it("keeps browser commands separate from agent lifecycle events", async () => {
+    const keys = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const publicKey = await webcrypto.subtle.exportKey("jwk", keys.publicKey);
+    const storage = new MemoryStorage();
+    const session = new PairingSession({ storage });
+    const sessionId = "c".repeat(32);
+    const registration = { version: 2, sessionId, publicKey, expiresAt: new Date(Date.now() + 60_000).toISOString() };
+    await session.fetch(new Request("https://pairing.internal/register", { method: "POST", body: JSON.stringify(registration) }));
+
+    const commandPath = `/api/pairing/${sessionId}/commands`;
+    const body = JSON.stringify({ eventId: "mission_1234", envelope: { version: 1, eventId: "mission_1234", iv: "a".repeat(16), ciphertext: "b".repeat(40) } });
+    const commandHeaders = await authHeaders(keys.privateKey, "POST", commandPath, body, "c".repeat(24));
+    expect((await session.fetch(new Request(`https://guild.test${commandPath}`, { method: "POST", headers: commandHeaders, body }))).status).toBe(201);
+
+    const eventsPath = `/api/pairing/${sessionId}/events?after=0`;
+    const eventHeaders = await authHeaders(keys.privateKey, "GET", eventsPath, "", "e".repeat(24));
+    const eventsResponse = await session.fetch(new Request(`https://guild.test${eventsPath}`, { headers: eventHeaders }));
+    expect((await eventsResponse.json()).events).toEqual([]);
+
+    const inboxPath = `/api/pairing/${sessionId}/commands?after=0`;
+    const inboxHeaders = await authHeaders(keys.privateKey, "GET", inboxPath, "", "i".repeat(24));
+    const inboxResponse = await session.fetch(new Request(`https://guild.test${inboxPath}`, { headers: inboxHeaders }));
+    expect((await inboxResponse.json()).events).toHaveLength(1);
+  });
 });
 
 class MemoryStorage {

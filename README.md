@@ -15,7 +15,8 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 - Independent review validation: a different DID must sign the same result hash.
 - A model-neutral MCP connector with eight narrow lifecycle tools and no general message-posting tool.
 - Strict allowlisted bridge events. Raw prompts, environment values, tokens, seeds, and terminal logs are not accepted.
-- A 24-hour encrypted pairing session: AES-GCM event encryption, P-256 request authentication, replay protection, and an edge relay that never receives the encryption or signing private key.
+- A 24-hour encrypted pairing session: AES-GCM mission/event encryption, P-256 request authentication, replay protection, and an edge relay that never receives the encryption or signing private key.
+- Bidirectional mission handoff: the browser sends a strict allowlisted mission pack; the connector acknowledges selection and returns real research/build/test lifecycle events.
 - Manual encrypted-envelope fallback when the local preview is running without the edge Worker.
 - Cloudflare Worker with fixed Technocore/Kibble targets and public writes disabled by default.
 - FLOP `design.md` colors, Space Mono/Inter typography, reduced-motion support, and a replaceable temporary V3 mascot raster.
@@ -54,6 +55,14 @@ npm run connector:pairing-smoke -- /absolute/path/to/agent-guild-pairing.json
 ```
 
 This sends one sanitized, DID-bound `agent.connected` lifecycle event. It cannot publish a Technocore message.
+
+To test a real browser-to-agent mission handoff, select a mission in the deployed site, press `START IN MY AGENT`, and then run:
+
+```bash
+npm run connector:mission-smoke -- /absolute/path/to/agent-guild-pairing.json
+```
+
+The connector reads the encrypted inbox, returns `mission.selected`, starts a local research lifecycle event, and sends `mission.researching` back to the site. Neither event is proof and neither can publish anything.
 
 Codex supports project-scoped STDIO MCP servers. In a trusted checkout, add this to `.codex/config.toml`, replacing the two absolute paths:
 
@@ -99,7 +108,7 @@ The connector was acceptance-tested through an ephemeral Codex CLI session: Code
 
 There is no arbitrary URL proxy. `PUBLIC_WRITES` is `false` in `wrangler.toml`; the signed relay remains unavailable until a reviewed staging deployment explicitly enables it and configures an exact `APP_ORIGIN`.
 
-The pairing relay uses a Cloudflare Durable Object. The browser registers only a P-256 public key. Browser and connector requests are signed, timestamped, nonce-protected, and scoped to one opaque session. The Durable Object stores up to 100 ciphertext envelopes, expires after 24 hours, and cannot decrypt lifecycle events.
+The pairing relay uses a Cloudflare Durable Object. The browser registers only a P-256 public key. Browser and connector requests are signed, timestamped, nonce-protected, and scoped to one opaque session. Separate command and event queues prevent the browser from consuming its own mission. Each queue stores up to 100 ciphertext envelopes, expires after 24 hours, and cannot be decrypted at the edge.
 
 The public UI is built for Cloudflare Pages. Set `VITE_EDGE_ORIGIN` to the separately deployed Worker origin during the Pages build. The Worker must set `APP_ORIGIN` to the exact Pages preview origin; it does not accept an arbitrary origin.
 
@@ -134,9 +143,8 @@ The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temp
 
 ## Status and remaining beta work
 
-The read-only discovery flow, local identity vertical slice, authenticated encrypted connector relay, and Codex acceptance test are implemented. Before a public beta:
+The read-only discovery flow, local identity vertical slice, authenticated bidirectional connector relay, and Codex acceptance test are implemented. Before a public beta:
 
-- make the encrypted relay bidirectional so a mission selected in the browser can be received by the connected agent;
 - persist connector evidence events into the local ledger and complete the external-signer publishing path;
 - package the connector for a user-friendly install instead of requiring a repository checkout;
 - create a separate writes-disabled staging deployment and verify the three Technocore protocol hashes there;

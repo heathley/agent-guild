@@ -61,7 +61,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return withPrivateCors(response, request, env);
     }
 
-    const pairingMatch = url.pathname.match(/^\/api\/pairing\/([^/]+)\/events$/);
+    const pairingMatch = url.pathname.match(/^\/api\/pairing\/([^/]+)\/(events|commands)$/);
     if ((request.method === "GET" || request.method === "POST") && pairingMatch) {
       const sessionId = decodeURIComponent(pairingMatch[1]);
       if (!PAIRING_SESSION.test(sessionId)) return json({ error: "Invalid pairing session." }, 400, request, env);
@@ -237,6 +237,7 @@ export class PairingSession {
         if (!existing) {
           await this.state.storage.put("registration", registration);
           await this.state.storage.put("events", []);
+          await this.state.storage.put("commands", []);
           await this.state.storage.setAlarm(Date.parse(registration.expiresAt));
         }
         return pairingJson({ registered: true, expiresAt: registration.expiresAt }, existing ? 200 : 201);
@@ -249,20 +250,21 @@ export class PairingSession {
       const authError = await verifyPairingAuth(request, registration.publicKey, body, this.state.storage);
       if (authError) return pairingJson({ error: authError }, 401);
 
-      if (request.method === "GET" && url.pathname.endsWith("/events")) {
+      const channel = url.pathname.endsWith("/commands") ? "commands" : url.pathname.endsWith("/events") ? "events" : "";
+      if (request.method === "GET" && channel) {
         const after = clampInt(url.searchParams.get("after"), 0, Number.MAX_SAFE_INTEGER, 0);
-        const events = (await this.state.storage.get("events")) || [];
+        const events = (await this.state.storage.get(channel)) || [];
         return pairingJson({ events: events.filter((item) => item.seq > after) }, 200);
       }
 
-      if (request.method === "POST" && url.pathname.endsWith("/events")) {
+      if (request.method === "POST" && channel) {
         const event = validateEncryptedEvent(JSON.parse(body));
-        const events = (await this.state.storage.get("events")) || [];
+        const events = (await this.state.storage.get(channel)) || [];
         const duplicate = events.find((item) => item.envelope.eventId === event.envelope.eventId);
         if (duplicate) return pairingJson({ accepted: true, seq: duplicate.seq, duplicate: true }, 200);
         const seq = (events.at(-1)?.seq || 0) + 1;
         const next = [...events, { seq, envelope: event.envelope }].slice(-100);
-        await this.state.storage.put("events", next);
+        await this.state.storage.put(channel, next);
         return pairingJson({ accepted: true, seq }, 201);
       }
 

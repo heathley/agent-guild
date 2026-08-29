@@ -11,6 +11,7 @@
     "connector": "tsx connector/index.ts",
     "connector:smoke": "tsx connector/smoke.ts",
     "connector:pairing-smoke": "tsx connector/pairing-smoke.ts",
+    "connector:mission-smoke": "tsx connector/mission-smoke.ts",
     "connector:relay-smoke": "tsx connector/relay-smoke.ts",
     "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build"
   },

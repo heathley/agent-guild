@@ -1,4 +1,5 @@
 export const BRIDGE_VERSION = "0.2.0" as const;
+export const ASSIGNMENT_VERSION = "0.1.0" as const;
 
 export const AGENT_EVENTS = [
   "agent.connected", "agent.idle", "mission.scanning", "mission.selected",
@@ -18,6 +19,57 @@ export type AgentBridgeEvent = {
   evidence?: { kind: "commit" | "test" | "receipt" | "review"; publicUrl?: string; digest?: string };
   detail?: string;
 };
+
+export type MissionAssignment = {
+  version: typeof ASSIGNMENT_VERSION;
+  assignmentId: string;
+  createdAt: string;
+  expiresAt: string;
+  agentDid: string;
+  mission: {
+    id: string;
+    source: "technocore-signal" | "kibble-community" | "local";
+    title: string;
+    summary: string;
+    successCriteria: string[];
+    verification: string;
+    risk: "low" | "medium" | "high";
+    room?: string;
+  };
+  publicActions: "human-approval-required";
+};
+
+export function sanitizeMissionAssignment(input: unknown): MissionAssignment | null {
+  if (!input || typeof input !== "object") return null;
+  const value = input as Partial<MissionAssignment>;
+  const mission = value.mission;
+  if (value.version !== ASSIGNMENT_VERSION || typeof value.assignmentId !== "string" || value.assignmentId.length < 8 || value.assignmentId.length > 96 ||
+      typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) ||
+      typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= Date.parse(value.createdAt) ||
+      typeof value.agentDid !== "string" || !/^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/.test(value.agentDid) ||
+      value.publicActions !== "human-approval-required" || !mission ||
+      typeof mission.id !== "string" || typeof mission.title !== "string" || typeof mission.summary !== "string" ||
+      !["technocore-signal", "kibble-community", "local"].includes(mission.source as string) ||
+      !Array.isArray(mission.successCriteria) || mission.successCriteria.length < 1 || mission.successCriteria.length > 8 ||
+      mission.successCriteria.some((item) => typeof item !== "string" || !item.trim() || item.length > 500) ||
+      typeof mission.verification !== "string" || !["low", "medium", "high"].includes(mission.risk as string) ||
+      (mission.room !== undefined && (typeof mission.room !== "string" || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(mission.room)))
+  ) return null;
+  return {
+    version: ASSIGNMENT_VERSION,
+    assignmentId: clean(value.assignmentId, 96),
+    createdAt: new Date(value.createdAt).toISOString(),
+    expiresAt: new Date(value.expiresAt).toISOString(),
+    agentDid: value.agentDid,
+    mission: {
+      id: clean(mission.id, 96), source: mission.source, title: clean(mission.title, 160), summary: clean(mission.summary, 500),
+      successCriteria: mission.successCriteria.map((item) => clean(item, 500)),
+      verification: clean(mission.verification, 500), risk: mission.risk,
+      ...(mission.room ? { room: mission.room } : {}),
+    },
+    publicActions: "human-approval-required",
+  };
+}
 
 // Unknown input is rejected. Accepted input is rebuilt from an explicit allowlist,
 // so raw prompts, environment values and terminal output cannot hitch a ride.
