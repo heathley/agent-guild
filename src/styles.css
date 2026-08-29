@@ -238,6 +238,10 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .identity-present strong { font-family: "Space Mono", monospace; }
 .identity-present span { color: var(--secondary); font: 700 8px "Space Mono", monospace; letter-spacing: .04em; }
 .identity-present code { font-size: 9px; color: var(--secondary); }
+.identity-success { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 12px; padding: 14px; color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: var(--surface); }
+.identity-success div { display: grid; gap: 5px; }
+.identity-success strong { font: 700 10px "Space Mono", monospace; }
+.identity-success p { margin: 0; color: var(--secondary); font-size: 12px; line-height: 1.5; }
 .signer-test { display: grid; gap: 14px; margin-top: 12px; padding: 16px; border: 1px solid var(--line); background: var(--surface); }
 .signer-test > p { margin: 0; color: var(--secondary); font-size: 12px; line-height: 1.55; }
 .signer-test > code { display: block; overflow-wrap: anywhere; color: var(--cyan); font-size: 9px; }

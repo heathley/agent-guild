@@ -298,7 +298,7 @@ function App() {
 
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
-      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onCreated={(value) => { setIdentity(value); setExternalDid(""); setIdentityOpen(false); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
+      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
       {pairOpen ? <ConnectorModal did={connectedDid} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={async (entries) => { setLedger(entries); await saveLedger(entries); }} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
     </div>
@@ -395,7 +395,7 @@ function CommunityMissionModal({ mission, onClose, onPlan }: { mission: Mission;
   </Modal>;
 }
 
-function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onDeleted: () => void }) {
+function IdentityModal({ identity, externalDid, onClose, onContinueConnector, onCreated, onExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onContinueConnector: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onDeleted: () => void }) {
   const [mode, setMode] = useState<"choose" | "create" | "bring">("choose");
   const [name, setName] = useState("heathley");
   const [skills, setSkills] = useState("DESIGN / CODING / RESEARCH / CONTENT");
@@ -413,6 +413,7 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   const [signerTestStatus, setSignerTestStatus] = useState<"" | "verified" | "failed">("");
   const [testingSigner, setTestingSigner] = useState(false);
   const [signerChallenge] = useState(() => `agent-guild-local-check:${crypto.randomUUID()}`);
+  const [identityStatus, setIdentityStatus] = useState<"" | "created" | "restored">("");
   const parsedSkills = skills.split("/").map((skill) => skill.trim()).filter(Boolean);
 
   function reviewDryRun() {
@@ -432,6 +433,8 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
       await saveLocalIdentity(value);
       download(`${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-agent-guild-identity.json`, exportIdentityBackup(value));
       setPassphrase(""); setConfirm("");
+      setMode("choose");
+      setIdentityStatus("created");
       onCreated(value);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Identity setup failed."); }
   }
@@ -464,6 +467,9 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
     try {
       const restored = parseIdentityBackup(backup);
       await saveLocalIdentity(restored);
+      setBackup("");
+      setMode("choose");
+      setIdentityStatus("restored");
       onCreated(restored);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Backup restore failed."); }
   }
@@ -477,8 +483,10 @@ function IdentityModal({ identity, externalDid, onClose, onCreated, onExternal, 
   return <Modal title="IDENTITY DOCK" onClose={onClose}>
     {mode === "choose" ? <>
       <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID. Neither choice buys or creates an AI model.</p>
+      {identityStatus ? <div className="identity-success" role="status"><ShieldCheck /><div><strong>{identityStatus === "restored" ? "ENCRYPTED VAULT RESTORED" : "ENCRYPTED DID CREATED"}</strong><p>{identityStatus === "restored" ? "The same identity is now available on this site. Confirm the public DID below before pairing." : "The encrypted vault is stored locally and its backup was downloaded. Confirm the public DID below."}</p></div></div> : null}
       {identity ? <>
         <div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong>{identity.skills?.length ? <span>{identity.skills.join(" · ")}</span> : null}<code>{identity.did}</code></div></div>
+        {identityStatus ? <button className="button button-primary full" onClick={onContinueConnector}>CONTINUE TO CONNECTOR <ArrowRight size={16} /></button> : null}
         <button className="button button-secondary full" onClick={() => { setSignerTestOpen((open) => !open); setSignerTestStatus(""); }}>TEST LOCAL SIGNER</button>
         {signerTestOpen ? <div className="signer-test">
           <p className="panel-kicker">LOCAL CHECK · NOTHING PUBLISHED</p>
