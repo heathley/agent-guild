@@ -1,4 +1,4 @@
-import { normalizeKibbleBoard } from "../protocol/kibble";
+import { normalizeKibbleBoardSnapshot, type KibbleBoardSnapshot } from "../protocol/kibble";
 import type { Mission } from "../protocol/models";
 import { edgeUrl } from "./edge";
 
@@ -52,9 +52,10 @@ export async function fetchTechnocoreRooms(signal?: AbortSignal): Promise<Public
   throw lastError instanceof Error ? lastError : new Error("Technocore rooms could not be read.");
 }
 
-export async function fetchKibbleJobs(signal?: AbortSignal): Promise<Mission[]> {
-  const payload = await requestJson("/api/kibble/board", signal);
-  return normalizeKibbleBoard(payload).slice(0, 60);
+export async function fetchKibbleJobs(signal?: AbortSignal): Promise<KibbleBoardSnapshot> {
+  const payload = await requestJson("/api/kibble/board", signal, 45_000);
+  const snapshot = normalizeKibbleBoardSnapshot(payload);
+  return { ...snapshot, missions: snapshot.missions.slice(0, 60) };
 }
 
 export async function fetchTechnocoreRoom(room: string, signal?: AbortSignal): Promise<RoomWindow> {
@@ -66,11 +67,11 @@ export async function fetchTechnocoreRoom(room: string, signal?: AbortSignal): P
 // Compatibility helper for callers that explicitly need both sources. The UI
 // loads them independently so one unavailable source cannot hide the other.
 export async function fetchSources(signal?: AbortSignal): Promise<SourceSnapshot> {
-  const [rooms, communityJobs] = await Promise.all([
+  const [rooms, communityBoard] = await Promise.all([
     fetchTechnocoreRooms(signal),
     fetchKibbleJobs(signal),
   ]);
-  return { rooms, communityJobs, fetchedAt: new Date().toISOString() };
+  return { rooms, communityJobs: communityBoard.missions, fetchedAt: new Date().toISOString() };
 }
 
 export function roomToMission(room: PublicRoom, finishLine?: string, sourceWindow?: RoomWindow): Mission {
@@ -140,8 +141,23 @@ export function normalizeRoomWindow(input: unknown, expectedRoom: string): RoomW
   };
 }
 
-async function requestJson(path: string, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetch(edgeUrl(path), { signal, headers: { accept: "application/json" } });
+async function requestJson(path: string, signal?: AbortSignal, timeoutMs = 20_000): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+  let response: Response;
+  try {
+    response = await fetch(edgeUrl(path), { signal: controller.signal, headers: { accept: "application/json" } });
+  } catch (error) {
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new Error("The public source is taking too long to wake up. Try again in a moment.");
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
   if (!response.ok) {
     let detail = "";
     try { detail = clean((await response.json() as { error?: unknown }).error, 240); } catch { /* upstream may not return JSON */ }

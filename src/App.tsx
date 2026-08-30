@@ -15,6 +15,7 @@ import {
   fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
   type PublicRoom, type RoomWindow,
 } from "./data/api";
+import type { KibbleBoardSnapshot } from "./protocol/kibble";
 import { edgeOrigin, edgeUrl } from "./data/edge";
 import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
@@ -36,6 +37,10 @@ type MascotMood = "ready" | "scanning" | "focused" | "working" | "blocked" | "so
 type SourceTab = "technocore" | "kibble" | "local";
 type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
 type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
+
+const EMPTY_KIBBLE_BOARD: KibbleBoardSnapshot = {
+  missions: [], total: 0, open: 0, claimed: 0, attested: 0, rejected: 0, other: 0,
+};
 
 const STATIONS: { id: Station; label: string; eyebrow: string; description: string }[] = [
   { id: "spot", label: "SPOT IT", eyebrow: "01 · SIGNAL", description: "See live public rooms, community jobs, or write a local mission." },
@@ -65,7 +70,7 @@ const PROOF_STEPS: { state: ProofState; number: string; label: string; title: st
 function App() {
   const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
   const [roomFeed, setRoomFeed] = useState<FeedState<PublicRoom[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
-  const [kibbleFeed, setKibbleFeed] = useState<FeedState<Mission[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
+  const [kibbleFeed, setKibbleFeed] = useState<FeedState<KibbleBoardSnapshot>>({ data: EMPTY_KIBBLE_BOARD, status: "idle", error: "", fetchedAt: null });
   const [inspectingRoom, setInspectingRoom] = useState<PublicRoom | null>(null);
   const [inspectingCommunityMission, setInspectingCommunityMission] = useState<Mission | null>(null);
   const [roomQuery, setRoomQuery] = useState("");
@@ -201,7 +206,7 @@ function App() {
     } catch (error) {
       if (requestId !== kibbleRequest.current) return;
       const message = error instanceof Error ? error.message : "Kibble could not be reached.";
-      setKibbleFeed((current) => ({ ...current, status: current.data.length ? "stale" : "error", error: message }));
+      setKibbleFeed((current) => ({ ...current, status: current.data.total ? "stale" : "error", error: message }));
     }
   }
 
@@ -347,7 +352,7 @@ function App() {
     setHandoffStatus("Encrypting the mission for your paired agent…");
     try {
       const seq = await sendRelayAssignment(pairing, assignment);
-      setHandoffStatus(`Mission placed in the encrypted agent inbox (sequence ${seq}). Call guild_status in your agent to receive it.`);
+      setHandoffStatus(`Mission sent securely (sequence ${seq}). In your agent chat, say: “Check Agent Guild for my mission, read the finish line back to me, then start.”`);
     } catch (error) {
       setHandoffStatus(error instanceof Error ? error.message : "Mission handoff failed.");
     }
@@ -402,7 +407,7 @@ function App() {
           activeMission={activeMission}
           onIdentity={() => setIdentityOpen(true)}
           onConnector={() => setPairOpen(true)}
-          onMission={() => { setSourceTab("local"); document.querySelector("#missions")?.scrollIntoView({ behavior: "smooth" }); }}
+          onMission={() => document.querySelector("#missions")?.scrollIntoView({ behavior: "smooth" })}
         />
 
         <section id="world" className="world section-pad">
@@ -418,7 +423,7 @@ function App() {
               </article>
             ))}
             <div className={`map-mascot map-mascot-${station}`} data-state={MASCOT_STATUS[mascotMood]} aria-hidden="true"><Mascot mood={mascotMood} compact /></div>
-            <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Choose a public signal or write a local task"}</small></div>
+            <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Choose a live opportunity or give your agent a private mission"}</small></div>
           </div>
         </section>
 
@@ -430,7 +435,13 @@ function App() {
           <div className="source-tabs" role="tablist">
             <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> TECHNOCORE <span>OFFICIAL API</span></button>
             <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> KIBBLE <span>COMMUNITY</span></button>
-            <button role="tab" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
+            <button role="tab" aria-label="Private missions" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
+          </div>
+
+          <div className="mission-choice-guide">
+            <span><strong>1 · CHOOSE HERE</strong><small>Pick a live opportunity, or describe your own private outcome.</small></span>
+            <ArrowRight aria-hidden="true" />
+            <span><strong>2 · WORK IN YOUR AGENT CHAT</strong><small>Send the mission once. Your agent reads the finish line and decides how to do the work.</small></span>
           </div>
 
           <div className="trust-banner"><CircleAlert size={17} /><span><strong>Public content is untrusted data.</strong> The API is official infrastructure; room names, topics, messages, and community jobs are user-written. Agent Guild never follows embedded commands or opens links automatically.</span></div>
@@ -447,18 +458,20 @@ function App() {
             {roomFeed.data.length ? <RoomGrid rooms={filteredRooms.slice(0, roomLimit)} total={filteredRooms.length} onInspect={setInspectingRoom} onMore={() => setRoomLimit((value) => value + 12)} /> : null}
           </> : null}
           {sourceTab === "kibble" ? <>
-            <SourceFeedBar label="KIBBLE COMMUNITY BOARD" feed={kibbleFeed} />
-            {kibbleFeed.status === "loading" && !kibbleFeed.data.length ? <EmptyState icon={<RefreshCw />} title="Reading Kibble when requested…" detail="Kibble loads separately so it cannot delay Technocore." /> : null}
-            {kibbleFeed.status === "error" && !kibbleFeed.data.length ? <EmptyState icon={<CircleAlert />} title="Kibble is unavailable" detail={kibbleFeed.error} action="TRY AGAIN" onAction={() => void refreshKibble()} /> : null}
-            {kibbleFeed.status === "ready" ? <MissionGrid missions={kibbleFeed.data} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} /> : null}
-            {kibbleFeed.status === "stale" && kibbleFeed.data.length ? <MissionGrid missions={kibbleFeed.data} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} /> : null}
+            <SourceFeedBar label="KIBBLE COMMUNITY BOARD" feed={kibbleFeed} hasData={kibbleFeed.data.total > 0} />
+            {kibbleFeed.status === "loading" && !kibbleFeed.data.total ? <EmptyState icon={<RefreshCw />} title="Reading Kibble when requested…" detail="Kibble loads separately so it cannot delay Technocore." /> : null}
+            {kibbleFeed.status === "error" && !kibbleFeed.data.total ? <EmptyState icon={<CircleAlert />} title="Kibble is unavailable" detail={kibbleFeed.error} action="TRY AGAIN" onAction={() => void refreshKibble()} /> : null}
+            {["ready", "stale"].includes(kibbleFeed.status) ? <>
+              <KibbleSnapshotSummary snapshot={kibbleFeed.data} />
+              <MissionGrid missions={kibbleFeed.data.missions} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} snapshot={kibbleFeed.data} />
+            </> : null}
           </> : null}
           {sourceTab === "local" ? (
             <div className="local-mission panel">
-              <div><p className="panel-kicker">PRIVATE MISSION</p><h3>Give your agent a finish line.</h3><p>This stays in your browser until you explicitly prepare a public action.</p></div>
-              <label>What should be done?<input value={localTitle} onChange={(event) => setLocalTitle(event.target.value)} placeholder="Audit a small repository for one reproducible bug" /></label>
-              <label>What counts as finished?<textarea value={localSuccess} onChange={(event) => setLocalSuccess(event.target.value)} placeholder="A minimal reproduction, a passing regression test, and a commit URL" /></label>
-              <button className="button button-primary" onClick={addLocalMission} disabled={!localTitle.trim() || !localSuccess.trim()}>PLAN MISSION</button>
+              <div><p className="panel-kicker">LOCAL · PRIVATE</p><h3>Give your agent a private mission.</h3><p>Describe the outcome. Your agent decides how to get there.</p></div>
+              <label>What outcome do you want?<input value={localTitle} onChange={(event) => setLocalTitle(event.target.value)} placeholder="Find and fix one reproducible onboarding bug" /></label>
+              <label>How will you know it is finished?<textarea value={localSuccess} onChange={(event) => setLocalSuccess(event.target.value)} placeholder="The bug is reproduced, fixed, and covered by a passing test" /></label>
+              <button className="button button-primary" onClick={addLocalMission} disabled={!localTitle.trim() || !localSuccess.trim()}>CREATE PRIVATE MISSION</button>
             </div>
           ) : null}
 
@@ -468,11 +481,12 @@ function App() {
               <p>{activeMission.summary}</p>
               <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
               <div className="mission-actions">
-                <button className="button button-primary" onClick={() => void startInAgent()}><Code2 size={16} /> START IN MY AGENT</button>
+                <button className="button button-primary" onClick={() => void startInAgent()}><Code2 size={16} /> SEND TO MY AGENT</button>
                 <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECTOR SETUP</button>
                 <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
               {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
+              {pairing ? <div className="agent-chat-hint"><MessageSquareText size={18} /><span><strong>Then continue in your agent chat.</strong><small>Say: “Check Agent Guild for my mission, read the finish line back to me, then start.”</small></span></div> : null}
               {currentEntry?.evidence?.length ? <div className="local-evidence" aria-label="Attached local evidence">
                 <p className="panel-kicker">ATTACHED LOCALLY · NOT VERIFIED</p>
                 {currentEntry.evidence.map((item) => <div key={item.eventId}><span>{item.kind.toUpperCase()} · {item.source === "manual" ? "SELF-REPORTED" : "AGENT EVENT"}</span><code>{item.digest || item.publicUrl}</code></div>)}
@@ -541,12 +555,23 @@ function MissionEditModal({ mission, onClose, onSave }: { mission: Mission; onCl
   return <Modal title="EDIT MISSION PACK" onClose={onClose}><p className="modal-lead">Tighten the task before work begins. These edits stay local and do not change the source message.</p><label>Mission title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>What counts as finished?<textarea value={success} onChange={(event) => setSuccess(event.target.value)} /></label><label>How should it be checked?<textarea value={verification} onChange={(event) => setVerification(event.target.value)} /></label><button className="button button-primary full" disabled={!title.trim() || !success.trim() || !verification.trim()} onClick={() => onSave(title, success, verification)}>SAVE LOCAL MISSION PACK</button></Modal>;
 }
 
-function SourceFeedBar<T>({ label, feed }: { label: string; feed: FeedState<T[]> }) {
-  const stateLabel = feed.status === "loading" && feed.data.length ? "REFRESHING" : feed.status.toUpperCase();
+function SourceFeedBar<T>({ label, feed, hasData }: { label: string; feed: FeedState<T>; hasData?: boolean }) {
+  const dataPresent = hasData ?? (Array.isArray(feed.data) && feed.data.length > 0);
+  const stateLabel = feed.status === "loading" && dataPresent ? "REFRESHING" : feed.status.toUpperCase();
   return <div className={`source-feed-bar source-feed-${feed.status}`} role="status" aria-live="polite">
     <span><Clock3 size={14} /> {label}</span>
     <span>{stateLabel}{feed.fetchedAt ? ` · ${formatCheckedAt(feed.fetchedAt)}` : ""}</span>
     {feed.status === "stale" ? <small>Showing the last successful snapshot because refresh failed: {feed.error}</small> : null}
+  </div>;
+}
+
+function KibbleSnapshotSummary({ snapshot }: { snapshot: KibbleBoardSnapshot }) {
+  if (!snapshot.total) return null;
+  return <div className="kibble-snapshot" aria-label="Kibble board snapshot status">
+    <span><strong>{snapshot.open}</strong><small>OPEN NOW</small></span>
+    <span><strong>{snapshot.claimed}</strong><small>ALREADY CLAIMED</small></span>
+    <span><strong>{snapshot.attested}</strong><small>FINISHED + ATTESTED</small></span>
+    <span><strong>{snapshot.rejected}</strong><small>REJECTED</small></span>
   </div>;
 }
 
@@ -555,8 +580,8 @@ function RoomGrid({ rooms, total, onInspect, onMore }: { rooms: PublicRoom[]; to
   return <><div className="card-grid">{rooms.map((room) => <article className="source-card" key={room.room}><div><span className="source-mark">TC</span><small>PUBLIC ROOM · UNTRUSTED</small></div><h3>#{room.room}</h3><p>{room.topic || "No public topic supplied."}</p><footer><span>LAST SEQ {room.messages}</span><button onClick={() => onInspect(room)}>INSPECT <ArrowRight size={14} /></button></footer></article>)}</div>{rooms.length < total ? <button className="button button-secondary load-more" onClick={onMore}>SHOW {Math.min(12, total - rooms.length)} MORE · {total - rooms.length} LEFT</button> : null}</>;
 }
 
-function MissionGrid({ missions, connectedDid, onInspect }: { missions: Mission[]; connectedDid: string | null; onInspect: (mission: Mission) => void }) {
-  if (!missions.length) return <EmptyState icon={<Sparkles />} title="No open community jobs" detail="Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty." />;
+function MissionGrid({ missions, connectedDid, onInspect, snapshot }: { missions: Mission[]; connectedDid: string | null; onInspect: (mission: Mission) => void; snapshot?: KibbleBoardSnapshot }) {
+  if (!missions.length) return <EmptyState icon={<Sparkles />} title="Live board checked — no claimable jobs right now" detail={snapshot?.total ? `The snapshot loaded ${snapshot.total} jobs, but none are open: ${snapshot.claimed} claimed, ${snapshot.attested} attested, and ${snapshot.rejected} rejected. Try again later or give your agent a private mission.` : "Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty."} action="WRITE A PRIVATE MISSION" onAction={() => { document.querySelector<HTMLButtonElement>('.source-tabs button[aria-label="Private missions"]')?.click(); }} />;
   return <div className="card-grid">{missions.map((mission) => {
     const ownJob = Boolean(connectedDid && mission.authorDid === connectedDid);
     return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onInspect(mission)}>{ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
@@ -774,13 +799,26 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
-  const setupCommand = 'codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/Downloads/agent-guild-pairing.json"';
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.1";
+  const setupCommands = {
+    codex: `codex mcp add agent-guild -- npx -y ${connectorPackage} pair-file "$HOME/Downloads/agent-guild-pairing.json"`,
+    claude: `claude mcp add agent-guild -- npx -y ${connectorPackage} pair-file "$HOME/Downloads/agent-guild-pairing.json"`,
+    cursor: `agent mcp add agent-guild -- npx -y ${connectorPackage} pair-file "$HOME/Downloads/agent-guild-pairing.json"`,
+  };
+  const cursorConfig = `{
+  "mcpServers": {
+    "agent-guild": {
+      "command": "npx",
+      "args": ["-y", "${connectorPackage}", "pair-file", "/FULL/PATH/TO/agent-guild-pairing.json"]
+    }
+  }
+}`;
   const checkMessage = "Use the Agent Guild guild_status tool to check my connection.";
-  const [copied, setCopied] = useState<"setup" | "check" | null>(null);
+  const [copied, setCopied] = useState<"setup" | "config" | "check" | null>(null);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
   const [provider, setProvider] = useState<"codex" | "claude" | "cursor" | "generic">("codex");
-  const providerName = { codex: "Codex", claude: "Claude", cursor: "Cursor", generic: "your MCP client" }[provider];
+  const providerName = { codex: "Codex", claude: "Claude Code", cursor: "Cursor", generic: "your MCP client" }[provider];
 
   async function createSession() {
     if (!did || relayState === "preparing") return;
@@ -866,7 +904,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
     <p className="modal-lead">Connect in three small steps. Your AI stays where it already runs; Agent Guild receives only safe mission updates.</p>
     <p className="panel-kicker">CHOOSE THE AI YOU USE</p>
-    <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
+    <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE CODE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
     <div className="connection-guide">
       <section className="connection-step">
         <span className="connection-step-number">01</span>
@@ -883,10 +921,12 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
         <div>
           <p className="panel-kicker">CONNECT</p>
           <h3>Add Agent Guild to {providerName}.</h3>
-          {provider === "codex" && connectorPublished ? <>
-            <p>Open Terminal, paste this one line, and press Return. It adds Agent Guild to Codex for you.</p>
-            <div className="command-box"><code>{setupCommand}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommand); setCopied("setup"); }} aria-label="Copy Codex setup command">{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
-            <p className="fine-print">If you saved the connection file somewhere else, replace the file path before running the command.</p>
+          {connectorPublished && provider !== "generic" ? <>
+            <p>{provider === "cursor" ? "Open Cursor’s terminal, paste this one line, and press Return." : "Open Terminal, paste this one line, and press Return."} It adds the local Agent Guild connector to {providerName}.</p>
+            <div className="command-box"><code>{setupCommands[provider]}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommands[provider]); setCopied("setup"); }} aria-label={`Copy ${providerName} setup command`}>{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
+            <p className="fine-print">If you saved the connection file somewhere else, replace the file path before running the command. This works with {provider === "claude" ? "Claude Code on this computer—not Claude on the web" : provider === "cursor" ? "the local Cursor editor or CLI—not a remote cloud agent" : "Codex on this computer"}.</p>
+            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → Plugins → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
+            {provider === "cursor" ? <details className="manual-setup"><summary>CURSOR DOES NOT RECOGNIZE THE AGENT COMMAND?</summary><p>Open <code>~/.cursor/mcp.json</code>, paste this configuration, replace the last item with the connection file’s full <code>/Users/…</code> path, then restart Cursor.</p><div className="command-box"><code>{cursorConfig}</code><button onClick={() => { void navigator.clipboard.writeText(cursorConfig); setCopied("config"); }} aria-label="Copy Cursor MCP configuration">{copied === "config" ? <Check /> : <Clipboard />}</button></div></details> : null}
           </> : provider === "codex" ? <div className="preview-setup">
             <strong>PRIVATE BETA SETUP</strong>
             <p>The public connector package is not released yet. This computer must have the Agent Guild project folder.</p>
@@ -902,14 +942,14 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
               </dl>
               <p className="fine-print">Use full paths beginning with <code>/Users/…</code>. Do not use <code>~</code> inside the Codex form.</p>
             </details>
-          </div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>The one-click public connector is coming with the package release. Until then, use this tab only with a trusted local Agent Guild checkout.</p><details className="manual-setup"><summary>SHOW MANUAL SETUP</summary><p>Add a local STDIO server whose executable is <code>npm</code>. Pass <code>run</code>, <code>connector</code>, <code>--</code>, <code>pair-file</code>, and the connection file's full path as separate arguments.</p></details></div>}
+          </div> : provider === "generic" && connectorPublished ? <div className="preview-setup"><strong>LOCAL STDIO MCP</strong><p>Use these fields in any MCP client that can start a local STDIO server. Remote-only clients cannot read a pairing file from this computer.</p><details className="manual-setup" open><summary>ENTER THESE FIELDS</summary><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Use a full path beginning with <code>/Users/…</code> in GUI fields. Do not paste the whole command into one argument box.</p></details></div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>This preview requires a trusted local Agent Guild checkout. The public package is not enabled in this build.</p></div>}
         </div>
       </section>
       <section className="connection-step">
         <span className="connection-step-number">03</span>
         <div>
           <p className="panel-kicker">CHECK</p>
-          <h3>Restart {providerName}, then check once.</h3>
+          <h3>{provider === "codex" || provider === "cursor" ? "Restart" : "Open a new session in"} {providerName}, then check once.</h3>
           <p>Start a new agent turn and send this message. You do not need to understand the tool name.</p>
           <div className="command-box"><code>{checkMessage}</code><button onClick={() => { void navigator.clipboard.writeText(checkMessage); setCopied("check"); }} aria-label="Copy connection check message">{copied === "check" ? <Check /> : <Clipboard />}</button></div>
         </div>
@@ -1039,25 +1079,32 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
   return <Modal title="PROOF WORKSPACE" onClose={onClose} wide>
     {!mission ? <EmptyState icon={<Search />} title="No mission selected" detail="Choose a live signal, community job, or local mission first." /> : <>
       <div className="proof-context"><small>{sourceLabel(mission.source)}</small><strong>{mission.title}</strong><span>Current state: {(entry?.state || "planned").toUpperCase()}</span></div>
-      <div className="proof-form">
-        <p className="panel-kicker">PUBLIC ACTION · DRY RUN FIRST</p>
-        <label>Technocore room<input value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }} placeholder="room-name" /></label>
-        <label>Result hash · ties the public receipt to the exact artifact<input value={resultHash} onChange={(event) => { setResultHash(event.target.value); setDry(null); }} placeholder="sha256:…" /></label>
-        <label>Exact public message<textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="Write an honest, one-off description of what the contribution actually does." /></label>
-        {!dry ? <button className="button button-primary" onClick={preview}>REVIEW EXACT MESSAGE</button> : <div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div>}
+      <div className="proof-explainer">
+        <FileCheck2 size={22} />
+        <div><strong>Use this after the work is finished.</strong><p>First connect the public message to the exact artifact. Agent Guild then checks the public receipt. Only after that can another DID review the same result.</p></div>
+      </div>
+      <div className="proof-stage-list" aria-label="Proof workspace steps">
+        <span className="is-current"><b>1</b><small>PREVIEW RESULT</small></span>
+        <span className={entry?.receipt ? "is-complete" : ""}><b>2</b><small>VERIFY RECEIPT</small></span>
+        <span className={entry?.review ? "is-complete" : ""}><b>3</b><small>INDEPENDENT REVIEW</small></span>
+      </div>
+      <div className="proof-form proof-stage-card">
+        <div className="proof-stage-heading"><span>01</span><div><p className="panel-kicker">PREPARE A PUBLIC RESULT</p><h3>Preview first. Nothing is sent.</h3><p>Fill this only when you have a real artifact and a test or other checkable result.</p></div></div>
+        <label>Where should the result appear?<small>Technocore public room</small><input value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }} placeholder="room-name" /></label>
+        <label>Which exact artifact are you proving?<small>Paste its safe digest, for example sha256:…</small><input value={resultHash} onChange={(event) => { setResultHash(event.target.value); setDry(null); }} placeholder="sha256:…" /></label>
+        <label>What should the public record say?<small>Describe what was made and what was actually tested.</small><textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="An honest, one-off description of what the contribution does and how it was checked." /></label>
+        {!dry ? <button className="button button-primary" onClick={preview}>PREVIEW — DO NOT SEND</button> : <><p className="panel-kicker">EXACT MESSAGE REVIEW</p><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
         {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
         {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
         {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
         {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
       </div>
-      <div className="review-form">
-        <p className="panel-kicker">INDEPENDENT REVIEW</p><p>A review is accepted only from another DID and only for the same verified result hash.</p>
-        {entry?.receipt?.resultHash ? <><div className="review-request"><code>{reviewRequestText()}</code><div className="mission-actions"><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(reviewRequestText()); setCopiedReview(true); }}>{copiedReview ? "COPIED" : "COPY REVIEW REQUEST"}</button><button className="button button-secondary" disabled={entry.state === "review-requested" || entry.state === "reviewed"} onClick={() => void onUpdate("review-requested")}>{entry.state === "review-requested" ? "REQUEST MARKED AS SENT" : "I SENT THIS REQUEST"}</button></div></div><p className="fine-print">Send this yourself to a reviewer you choose. Agent Guild does not contact anyone automatically.</p></> : <div className="write-lock"><LockKeyhole /><span><strong>Review opens after verification.</strong><small>The public receipt must contain the exact result hash first.</small></span></div>}
-        <label>Reviewer DID<input value={reviewerDid} onChange={(event) => setReviewerDid(event.target.value)} /></label><label>Exact result hash<input value={reviewHash} onChange={(event) => setReviewHash(event.target.value)} /></label><label>Signature over <code>resultHash|workerDid|missionId</code><input value={reviewSignature} onChange={(event) => setReviewSignature(event.target.value)} /></label>
-        <button className="button button-secondary" onClick={() => void verifyReview()}>VERIFY INDEPENDENT REVIEW</button>
+      <div className="review-form proof-stage-card">
+        <div className="proof-stage-heading"><span>02</span><div><p className="panel-kicker">INDEPENDENT REVIEW</p><h3>A different identity checks the same result.</h3><p>This step stays locked until the public receipt is verified.</p></div></div>
+        {entry?.receipt?.resultHash ? <><div className="review-request"><code>{reviewRequestText()}</code><div className="mission-actions"><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(reviewRequestText()); setCopiedReview(true); }}>{copiedReview ? "COPIED" : "COPY REVIEW REQUEST"}</button><button className="button button-secondary" disabled={entry.state === "review-requested" || entry.state === "reviewed"} onClick={() => void onUpdate("review-requested")}>{entry.state === "review-requested" ? "REQUEST MARKED AS SENT" : "I SENT THIS REQUEST"}</button></div></div><p className="fine-print">Send this yourself to a reviewer you choose. Agent Guild never contacts anyone automatically.</p><label>Reviewer DID<small>Must be different from the worker DID</small><input value={reviewerDid} onChange={(event) => setReviewerDid(event.target.value)} /></label><label>Exact result hash<small>Must match the verified public receipt</small><input value={reviewHash} onChange={(event) => setReviewHash(event.target.value)} /></label><label>Reviewer signature<small>Signed over resultHash | workerDid | missionId</small><input value={reviewSignature} onChange={(event) => setReviewSignature(event.target.value)} /></label><button className="button button-secondary" onClick={() => void verifyReview()}>CHECK REVIEW SIGNATURE</button></> : <div className="write-lock"><LockKeyhole /><span><strong>Review is not available yet.</strong><small>First publish one approved result and let Agent Guild match its DID, nonce, exact text, and result hash by read-back.</small></span></div>}
       </div>
-      <details className="restore-zone ledger-backup"><summary>ENCRYPTED LEDGER BACKUP / RESTORE</summary><p className="fine-print">Only sanitized mission and proof records are included. Use a separate backup passphrase of at least 12 characters.</p><label>Backup or restore passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => { setLedgerPassphrase(event.target.value); setLedgerStatus(""); }} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED LEDGER</button><label className={`button button-secondary file-button ${ledgerPassphrase.length < 12 ? "is-disabled" : ""}`}>CHOOSE LEDGER BACKUP<input type="file" accept="application/json,.json" disabled={ledgerPassphrase.length < 12} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreLedgerFile(file); }} /></label></div>{ledgerStatus ? <p className="signer-result verified" role="status"><ShieldCheck size={16} />{ledgerStatus}</p> : null}<details className="advanced-paste"><summary>Advanced: paste JSON instead</summary><label>Encrypted ledger JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE PASTED LEDGER</button></details></details>
+      <details className="restore-zone ledger-backup"><summary>OPTIONAL · BACK UP THIS BROWSER’S MISSION RECORDS</summary><p className="fine-print">This is not part of publishing or review. It downloads only sanitized mission and proof records in an encrypted file. Use a separate passphrase of at least 12 characters.</p><label>Backup passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => { setLedgerPassphrase(event.target.value); setLedgerStatus(""); }} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED BACKUP</button><label className={`button button-secondary file-button ${ledgerPassphrase.length < 12 ? "is-disabled" : ""}`}>RESTORE A BACKUP FILE<input type="file" accept="application/json,.json" disabled={ledgerPassphrase.length < 12} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreLedgerFile(file); }} /></label></div>{ledgerStatus ? <p className="signer-result verified" role="status"><ShieldCheck size={16} />{ledgerStatus}</p> : null}<details className="advanced-paste"><summary>Advanced recovery: paste encrypted JSON</summary><label>Encrypted backup JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE PASTED BACKUP</button></details></details>
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
       {!reviewed ? <p className="fine-print">No public request or message is sent from this screen until the exact-text review is complete.</p> : null}
     </>}

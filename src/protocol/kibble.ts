@@ -11,6 +11,16 @@ export type KibbleBoardItem = {
   created_at?: unknown;
 };
 
+export type KibbleBoardSnapshot = {
+  missions: Mission[];
+  total: number;
+  open: number;
+  claimed: number;
+  attested: number;
+  rejected: number;
+  other: number;
+};
+
 const TEXT_LIMIT = 2_000;
 
 export function normalizeKibbleBoard(input: unknown): Mission[] {
@@ -39,6 +49,24 @@ export function normalizeKibbleBoard(input: unknown): Mission[] {
   });
 }
 
+export function normalizeKibbleBoardSnapshot(input: unknown): KibbleBoardSnapshot {
+  const rows = extractRows(input).filter((row): row is KibbleBoardItem => Boolean(row && typeof row === "object"));
+  const counts = { open: 0, claimed: 0, attested: 0, rejected: 0, other: 0 };
+  for (const row of rows) {
+    const status = safeText(row.status, 32).toLowerCase();
+    if (["open", "job", "available"].includes(status)) counts.open += 1;
+    else if (status === "claimed") counts.claimed += 1;
+    else if (status === "attested") counts.attested += 1;
+    else if (status === "rejected") counts.rejected += 1;
+    else counts.other += 1;
+  }
+  return {
+    missions: normalizeKibbleBoard(input),
+    total: rows.length,
+    ...counts,
+  };
+}
+
 function extractRows(input: unknown): unknown[] {
   if (Array.isArray(input)) return input;
   if (!input || typeof input !== "object") return [];
@@ -58,4 +86,3 @@ function safeDate(value: unknown): string {
   if (typeof value === "string" && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
   return new Date(0).toISOString();
 }
-

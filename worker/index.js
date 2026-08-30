@@ -41,7 +41,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     if (request.method === "GET" && url.pathname === "/api/kibble/board") {
-      return await readJson(`${KIBBLE}/api/board?status=open&limit=60`, request, env, ctx, 20);
+      return await readJson(`${KIBBLE}/api/board?status=open&limit=60`, request, env, ctx, 300, 40_000);
     }
 
     if (request.method === "GET" && url.pathname === "/api/kibble/status") {
@@ -128,12 +128,22 @@ function sweep(value) {
   return value.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, " ").trim();
 }
 
-async function readJson(target, request, env, ctx, ttl) {
+async function readJson(target, request, env, ctx, ttl, timeoutMs = 20_000) {
   const cache = globalThis.caches?.default;
   const cacheKey = new Request(target, { method: "GET" });
   const cached = cache ? await cache.match(cacheKey) : null;
   if (cached) return withCors(cached, request, env);
-  const upstream = await fetch(target, { headers: { accept: "application/json", "User-Agent": "Agent-Guild/0.2" } });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  let upstream;
+  try {
+    upstream = await fetch(target, { signal: controller.signal, headers: { accept: "application/json", "User-Agent": "Agent-Guild/0.2" } });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("The upstream public source timed out.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const response = new Response(await upstream.text(), {
     status: upstream.status,
     headers: {
