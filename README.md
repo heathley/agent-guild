@@ -59,7 +59,7 @@ The command contains no secret. On a deployed preview, encrypted lifecycle event
 
 Refreshing the same browser tab automatically restores its temporary session. After closing the tab or moving devices, choose `USE EXISTING PAIRING FILE`. The browser validates the file locally against the current DID, exact Agent Guild relay, expiry, and P-256 signing material, then re-registers the same temporary session. The file is never uploaded; only its public verification key reaches the edge. A new file is required only after the 24-hour session expires or when the DID/relay changes.
 
-The publishable package is built from `packages/connector` and checked without publishing:
+The public beta package is built from `packages/connector` and checked before each release:
 
 ```bash
 npm run build:connector-package
@@ -67,7 +67,7 @@ npm run connector:package-smoke
 npm pack ./packages/connector --dry-run
 ```
 
-After the package owner separately approves and completes npm publication, set `VITE_CONNECTOR_PUBLISHED=true`. The website will then show the pinned command `npx @agent-guild/connector@0.1.0-beta.1 …`; it never points users at an unpublished package.
+`@agent-guild/connector@0.1.0-beta.1` is published on npm. Production builds set `VITE_CONNECTOR_PUBLISHED=true`, so the website shows the pinned one-line Codex setup command instead of repository-only private-beta instructions.
 
 For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
 
@@ -164,10 +164,8 @@ The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temp
 
 ## Status and remaining external actions
 
-The read-only discovery flow, self-service local and external identity paths, authenticated bidirectional connector relay, DID-bound evidence/activity history, exact-message proof workspace, independent review package, npm-ready connector package, and Codex/generic MCP acceptance tests are implemented locally. The remaining items create external state and require separate approval:
+The read-only discovery flow, self-service local and external identity paths, authenticated bidirectional connector relay, DID-bound evidence/activity history, exact-message proof workspace, independent review package, published npm connector, and Codex/generic MCP acceptance tests are implemented. The remaining items create external state and require separate approval:
 
-- deploy the completed writes-disabled UI and Worker update;
-- publish `@agent-guild/connector@0.1.0-beta.1` to npm, then rebuild the UI with `VITE_CONNECTOR_PUBLISHED=true`;
 - create the public `heathley/agent-guild` repository and push the reviewed local commits;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
 - obtain separate approval before each deployment, npm publication, Git push, or public message.
