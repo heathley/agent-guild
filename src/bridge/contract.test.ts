@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASSIGNMENT_VERSION, BRIDGE_VERSION, isAgentBridgeEvent, sanitizeBridgePayload, sanitizeMissionAssignment } from "./contract";
+import { ASSIGNMENT_VERSION, BRIDGE_VERSION, DISCOVERY_REQUEST_VERSION, isAgentBridgeEvent, normalizeWorkspacePath, sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment } from "./contract";
 
 const event = {
   version: BRIDGE_VERSION,
@@ -36,12 +36,14 @@ describe("Agent Bridge contract", () => {
         successCriteria: ["The agent acknowledges the exact mission"], verification: "Observe signed relay lifecycle events.", risk: "low",
         prompt: "must not cross the bridge",
       },
+      workspace: { requiredPath: "/Users/test/agent-work/", policy: "exact" },
       publicActions: "human-approval-required",
       environment: { SECRET: "must not cross the bridge" },
     };
     const safe = sanitizeMissionAssignment(assignment);
     expect(safe).not.toHaveProperty("environment");
     expect(safe?.mission).not.toHaveProperty("prompt");
+    expect(safe?.workspace).toEqual({ requiredPath: "/Users/test/agent-work", policy: "exact" });
     expect(safe?.publicActions).toBe("human-approval-required");
   });
 
@@ -50,8 +52,27 @@ describe("Agent Bridge contract", () => {
       version: ASSIGNMENT_VERSION, assignmentId: "assignment_1234",
       createdAt: "2026-08-29T00:00:00.000Z", expiresAt: "2026-08-29T00:30:00.000Z", agentDid: "did:key:wrong",
       mission: { id: "1", source: "local", title: "A", summary: "B", successCriteria: [], verification: "C", risk: "low" },
+      workspace: { requiredPath: "../wrong", policy: "exact" },
       publicActions: "human-approval-required",
     };
     expect(sanitizeMissionAssignment(assignment)).toBeNull();
+  });
+
+  it("normalizes absolute workspace paths and rejects traversal", () => {
+    expect(normalizeWorkspacePath("/Users/test/Flop-Friend/")).toBe("/Users/test/Flop-Friend");
+    expect(normalizeWorkspacePath("C:\\Users\\test\\project\\")).toBe("c:/Users/test/project");
+    expect(normalizeWorkspacePath("../Flop-Friend")).toBeNull();
+    expect(normalizeWorkspacePath("/Users/test/../Flop")).toBeNull();
+  });
+
+  it("requires a workspace for autonomous work but not suggestion-only scans", () => {
+    const base = {
+      version: DISCOVERY_REQUEST_VERSION, requestId: "discovery_1234",
+      createdAt: "2026-08-29T00:00:00.000Z", expiresAt: "2026-08-29T00:30:00.000Z",
+      agentDid: `did:key:z6Mk${"a".repeat(44)}`, source: "all", skills: ["RESEARCH"], publicActions: "human-approval-required",
+    };
+    expect(sanitizeDiscoveryRequest({ ...base, mode: "suggest" })).not.toBeNull();
+    expect(sanitizeDiscoveryRequest({ ...base, mode: "local-autonomy" })).toBeNull();
+    expect(sanitizeDiscoveryRequest({ ...base, mode: "local-autonomy", workspace: { requiredPath: "/Users/test/work", policy: "exact" } })?.workspace?.requiredPath).toBe("/Users/test/work");
   });
 });

@@ -44,6 +44,7 @@ describe("browser pairing", () => {
       version: ASSIGNMENT_VERSION, assignmentId: "assignment_1234",
       createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 60_000).toISOString(), agentDid,
       mission: { id: "local:1", source: "local", title: "Connector check", summary: "Receive one safe mission.", successCriteria: ["Agent acknowledges it"], verification: "Observe lifecycle events.", risk: "low", prompt: "not allowed" },
+      workspace: { requiredPath: "/Users/test/Flop-Friend", policy: "exact" },
       publicActions: "human-approval-required",
     };
     try {
@@ -52,6 +53,7 @@ describe("browser pairing", () => {
       const decrypted = await decryptRelayedMission(pairing, { seq: 1, envelope: posted!.envelope });
       expect(decrypted.mission.title).toBe("Connector check");
       expect(decrypted.mission).not.toHaveProperty("prompt");
+      expect(decrypted.workspace.requiredPath).toBe("/Users/test/Flop-Friend");
     } finally {
       fetchMock.mockRestore();
     }

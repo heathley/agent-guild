@@ -24,12 +24,16 @@ npx @agent-guild/connector pair-file "$HOME/.agent-guild/agent-guild-pairing.jso
 
 5. Restart the MCP client, open a new agent session, and call `guild_status`.
 
+Agent Guild is an MCP server, not a Codex plugin. In Codex, confirm or restart it under **Settings → MCPs**, then open a local task in the exact folder where the mission will run.
+
 The pairing file is a temporary encrypted session pass. It is not a DID backup and does not contain the DID private key.
 
 ## Narrow tool surface
 
 - `guild_status`
+- `guild_read_work_policy`
 - `guild_scan_work`
+- `guild_suggest_work`
 - `guild_propose_mission`
 - `guild_start_run`
 - `guild_report_progress`
@@ -38,3 +42,5 @@ The pairing file is a temporary encrypted session pass. It is not a DID backup a
 - `guild_request_review`
 
 There is no general `post_message` tool.
+
+Mission assignments carry an encrypted exact workspace path. `guild_start_run` requires the agent to report its current absolute workspace and blocks the run when it does not match. The connector also supplies short universal Technocore safety instructions to every MCP client. A richer optional Codex skill is kept separately in `skills/agent-guild-technocore-work`; installing the npm package does not silently install a Codex skill.

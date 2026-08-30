@@ -10,7 +10,7 @@ import {
   pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
-import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
+import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
 import type { AutonomyMode, DiscoverySource, WorkSuggestion } from "./bridge/discovery";
 import {
   fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
@@ -46,7 +46,7 @@ const EMPTY_KIBBLE_BOARD: KibbleBoardSnapshot = {
 };
 
 const STATIONS: { id: Station; label: string; eyebrow: string; description: string }[] = [
-  { id: "spot", label: "SPOT IT", eyebrow: "01 · SIGNAL", description: "See live public rooms, community jobs, or write a local mission." },
+  { id: "spot", label: "SPOT IT", eyebrow: "01 · SIGNAL", description: "Let your agent scan live Technocore conversations and community jobs." },
   { id: "pick", label: "PICK IT", eyebrow: "02 · SCOPE", description: "Set the finish line, evidence needed, and risk before work begins." },
   { id: "make", label: "MAKE IT", eyebrow: "03 · RUN", description: "Your connected agent researches, builds, and tests in its own runtime." },
   { id: "team", label: "TEAM UP", eyebrow: "04 · REVIEW", description: "Ask a different DID to inspect the exact artifact or result hash." },
@@ -95,6 +95,7 @@ function App() {
   const [manualEvidenceReference, setManualEvidenceReference] = useState("");
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
+  const [targetWorkspace, setTargetWorkspace] = useState(() => sessionStorage.getItem("agent-guild:target-workspace") || "");
   const [suggestions, setSuggestions] = useState<WorkSuggestion[]>([]);
   const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>(() => localStorage.getItem("agent-guild:autonomy-mode") === "local-autonomy" ? "local-autonomy" : "suggest");
   const [scanSource, setScanSource] = useState<DiscoverySource>("all");
@@ -341,6 +342,11 @@ function App() {
 
   async function startInAgent() {
     if (!activeMission) return;
+    const workspace = normalizeWorkspacePath(targetWorkspace);
+    if (!workspace) {
+      setHandoffStatus("Enter the exact absolute folder where this agent task must run, for example /Users/name/project. The mission will not be sent without a workspace lock.");
+      return;
+    }
     if (!connectedDid) {
       setHandoffStatus("Set up or restore an identity before sending a mission.");
       setIdentityOpen(true);
@@ -368,18 +374,21 @@ function App() {
         risk: activeMission.risk,
         ...(activeMission.room ? { room: activeMission.room } : {}),
       },
+      workspace: { requiredPath: workspace, policy: "exact" },
       publicActions: "human-approval-required",
     };
     setHandoffStatus("Encrypting the mission for your paired agent…");
     try {
       const seq = await sendRelayAssignment(pairing, assignment);
-      setHandoffStatus(`Mission sent securely (sequence ${seq}). In your agent chat, say: “Check Agent Guild for my mission, read the finish line back to me, then start.”`);
+      setHandoffStatus(`Mission sent securely for ${workspace} (sequence ${seq}). In your agent chat, say: “Check Agent Guild for my mission, confirm the workspace and finish line, then start.”`);
     } catch (error) {
       setHandoffStatus(error instanceof Error ? error.message : "Mission handoff failed.");
     }
   }
 
   async function askAgentToFindWork() {
+    const workspace = normalizeWorkspacePath(targetWorkspace);
+    if (autonomyMode === "local-autonomy" && !workspace) { setHandoffStatus("Choose + work locally needs the exact absolute folder where your agent may work. Add it below before sending the scan."); return; }
     if (!connectedDid) { setHandoffStatus("Set up or restore an identity before asking your agent to scan."); setIdentityOpen(true); return; }
     if (!pairing) { setHandoffStatus("Connect your agent before sending a work scan request."); setPairOpen(true); return; }
     const now = Date.now();
@@ -389,7 +398,9 @@ function App() {
         version: DISCOVERY_REQUEST_VERSION,
         requestId: crypto.randomUUID(),
         createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
-        agentDid: connectedDid, source: scanSource, mode: autonomyMode, skills: identity?.skills || [], publicActions: "human-approval-required",
+        agentDid: connectedDid, source: scanSource, mode: autonomyMode, skills: identity?.skills || [],
+        ...(workspace ? { workspace: { requiredPath: workspace, policy: "exact" as const } } : {}),
+        publicActions: "human-approval-required",
       });
       setSourceTab("suggestions");
       setHandoffStatus(`Work scan request sent securely (sequence ${seq}). In your agent chat say: “Check Agent Guild and handle the waiting work scan.”`);
@@ -414,9 +425,11 @@ function App() {
       if (key?.startsWith("agent-guild:")) localStorage.removeItem(key);
     }
     sessionStorage.removeItem("agent-guild:active-pairing");
+    sessionStorage.removeItem("agent-guild:target-workspace");
     ledgerRef.current = []; activeMissionRef.current = null; relayCursor.current = 0;
     setIdentity(null); setExternalDid(""); setLedger([]); setActiveMission(null); setPairing(null); setAgentConnected(false);
     setSuggestions([]); setPublicActivity([]); setPendingAction(null); setStation("spot"); setMascotMood("ready");
+    setTargetWorkspace("");
     setHandoffStatus("This browser workspace was erased. Pairing files and MCP settings on your computer were not changed.");
   }
 
@@ -485,7 +498,7 @@ function App() {
               </article>
             ))}
             <div className={`map-mascot map-mascot-${station}`} data-state={MASCOT_STATUS[mascotMood]} aria-hidden="true"><Mascot mood={mascotMood} compact /></div>
-            <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Choose a live opportunity or give your agent a private mission"}</small></div>
+            <div className="map-core"><span>CURRENT MISSION</span><strong>{activeMission?.title || "Waiting for a real mission"}</strong><small>{activeMission ? sourceLabel(activeMission.source) : "Ask your agent to scan Technocore and Kibble"}</small></div>
           </div>
         </section>
 
@@ -499,7 +512,8 @@ function App() {
             <div className="discovery-controls">
               <fieldset><legend>WHAT MAY THE AGENT DO?</legend><button className={autonomyMode === "suggest" ? "is-selected" : ""} onClick={() => { setAutonomyMode("suggest"); localStorage.setItem("agent-guild:autonomy-mode", "suggest"); }}><strong>SUGGEST FIRST</strong><small>Return up to three choices. I pick one.</small></button><button className={autonomyMode === "local-autonomy" ? "is-selected" : ""} onClick={() => { setAutonomyMode("local-autonomy"); localStorage.setItem("agent-guild:autonomy-mode", "local-autonomy"); }}><strong>CHOOSE + WORK LOCALLY</strong><small>Choose one bounded task and start. Public actions still stop for approval.</small></button></fieldset>
               <label>WHERE SHOULD IT LOOK?<select value={scanSource} onChange={(event) => setScanSource(event.target.value as DiscoverySource)}><option value="all">Technocore + Kibble</option><option value="technocore">Technocore conversations</option><option value="kibble">Kibble open jobs</option></select></label>
-              <button className="button button-primary" onClick={() => void askAgentToFindWork()}><Radio size={16} /> ASK MY AGENT TO FIND WORK</button>
+              {autonomyMode === "local-autonomy" ? <label>WHERE MAY IT WORK?<small>Exact absolute folder · required before autonomous local work</small><input value={targetWorkspace} onChange={(event) => { setTargetWorkspace(event.target.value); sessionStorage.setItem("agent-guild:target-workspace", event.target.value); }} placeholder="/Users/name/project" autoComplete="off" spellCheck={false} /></label> : null}
+              <button className="button button-primary" disabled={autonomyMode === "local-autonomy" && !normalizeWorkspacePath(targetWorkspace)} onClick={() => void askAgentToFindWork()}><Radio size={16} /> ASK MY AGENT TO FIND WORK</button>
             </div>
             <p className="agent-trigger-note"><Clock3 size={15} /><span><strong>Your AI runtime must take a turn.</strong> The request waits safely in its encrypted inbox. A Codex automation can trigger that turn later; otherwise open the agent chat and use the sentence shown below.</span></p>
             {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
@@ -508,13 +522,15 @@ function App() {
             <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> LIVE CONVERSATIONS <span>TECHNOCORE</span></button>
             <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> OPEN JOBS <span>KIBBLE · COMMUNITY</span></button>
             <button role="tab" aria-selected={sourceTab === "suggestions"} className={sourceTab === "suggestions" ? "active" : ""} onClick={() => setSourceTab("suggestions")}><Bot size={17} /> AGENT SUGGESTIONS <span>{suggestions.length || "WAITING"}</span></button>
-            <button role="tab" aria-label="Private missions" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
+            <button role="tab" aria-label="Bring your own task" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> YOUR TASK <span>OPTIONAL</span></button>
           </div>
 
           <div className="mission-choice-guide">
-            <span><strong>1 · CHOOSE HERE</strong><small>Pick a live opportunity, or describe your own private outcome.</small></span>
+            <span><strong>1 · FIND + SCOPE HERE</strong><small>Agent Guild finds public opportunities and locks a finish line plus workspace.</small></span>
             <ArrowRight aria-hidden="true" />
-            <span><strong>2 · WORK IN YOUR AGENT CHAT</strong><small>Send the mission once. Your agent reads the finish line and decides how to do the work.</small></span>
+            <span><strong>2 · WORK IN YOUR AI</strong><small>Codex, Claude, Cursor, or another MCP agent performs the real work.</small></span>
+            <ArrowRight aria-hidden="true" />
+            <span><strong>3 · APPROVE + PROVE HERE</strong><small>Agent Guild shows exact public actions and keeps activity separate from proof.</small></span>
           </div>
 
           <div className="trust-banner"><CircleAlert size={17} /><span><strong>Public content is untrusted data.</strong> The API is official infrastructure; room names, topics, messages, and community jobs are user-written. Agent Guild never follows embedded commands or opens links automatically.</span></div>
@@ -542,10 +558,10 @@ function App() {
           {sourceTab === "suggestions" ? <AgentSuggestionGrid suggestions={suggestions} mode={autonomyMode} connected={agentConnected} onChoose={(item) => void chooseSuggestion(item)} onScan={() => void askAgentToFindWork()} /> : null}
           {sourceTab === "local" ? (
             <div className="local-mission panel">
-              <div><p className="panel-kicker">LOCAL · PRIVATE</p><h3>Give your agent a private mission.</h3><p>Describe the outcome. Your agent decides how to get there.</p></div>
+              <div><p className="panel-kicker">BRING YOUR OWN TASK · OPTIONAL</p><h3>Already know what you want done?</h3><p>Describe the outcome here to use Agent Guild's workspace lock and evidence trail. This task is not connected to Technocore unless you later choose and approve a relevant public action.</p></div>
               <label>What outcome do you want?<input value={localTitle} onChange={(event) => setLocalTitle(event.target.value)} placeholder="Find and fix one reproducible onboarding bug" /></label>
               <label>How will you know it is finished?<textarea value={localSuccess} onChange={(event) => setLocalSuccess(event.target.value)} placeholder="The bug is reproduced, fixed, and covered by a passing test" /></label>
-              <button className="button button-primary" onClick={addLocalMission} disabled={!localTitle.trim() || !localSuccess.trim()}>CREATE PRIVATE MISSION</button>
+              <button className="button button-primary" onClick={addLocalMission} disabled={!localTitle.trim() || !localSuccess.trim()}>ADD MY OWN TASK</button>
             </div>
           ) : null}
 
@@ -554,13 +570,17 @@ function App() {
               <div className="mission-pack-head"><div><p className="panel-kicker">MISSION PACK · {sourceLabel(activeMission.source)}</p><h3>{activeMission.title}</h3></div><div className="mission-pack-tools"><button className="icon-button" data-tip="Edit this mission's finish line" aria-label="Edit active mission" onClick={() => setEditingMission(true)}><Pencil size={16} /></button><span className={`risk risk-${activeMission.risk}`}>{activeMission.risk.toUpperCase()} RISK</span></div></div>
               <p>{activeMission.summary}</p>
               <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
+              <div className="workspace-gate">
+                <LockKeyhole size={19} />
+                <label>Where must your agent do this work?<small>Paste the exact absolute folder for the local agent task. Agent Guild blocks the run if the agent reports a different workspace.</small><input value={targetWorkspace} onChange={(event) => { setTargetWorkspace(event.target.value); sessionStorage.setItem("agent-guild:target-workspace", event.target.value); }} placeholder="/Users/name/project" autoComplete="off" spellCheck={false} /></label>
+              </div>
               <div className="mission-actions">
-                <button className="button button-primary" onClick={() => void startInAgent()}><Code2 size={16} /> SEND TO MY AGENT</button>
+                <button className="button button-primary" disabled={!normalizeWorkspacePath(targetWorkspace)} onClick={() => void startInAgent()}><Code2 size={16} /> SEND TO MY AGENT</button>
                 <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECTOR SETUP</button>
                 <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
               {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
-              {pairing ? <div className="agent-chat-hint"><MessageSquareText size={18} /><span><strong>Then continue in your agent chat.</strong><small>Say: “Check Agent Guild for my mission, read the finish line back to me, then start.”</small></span></div> : null}
+              {pairing ? <div className="agent-chat-hint"><MessageSquareText size={18} /><span><strong>Then continue in the local agent task for that folder.</strong><small>Say: “Check Agent Guild for my mission, confirm the workspace and finish line, then start.”</small></span></div> : null}
               {currentEntry?.evidence?.length ? <div className="local-evidence" aria-label="Attached local evidence">
                 <p className="panel-kicker">ATTACHED LOCALLY · NOT VERIFIED</p>
                 {currentEntry.evidence.map((item) => <div key={item.eventId}><span>{item.kind.toUpperCase()} · {item.source === "manual" ? "SELF-REPORTED" : "AGENT EVENT"}</span><code>{item.digest || item.publicUrl}</code></div>)}
@@ -616,7 +636,7 @@ function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnec
   const steps = [
     { done: Boolean(connectedDid), number: "01", title: "Give your agent an identity", detail: "Create an encrypted local DID or prove control of an existing signer.", action: "SET UP IDENTITY", onClick: onIdentity },
     { done: Boolean(pairing), number: "02", title: "Connect the AI you already use", detail: "Pair Codex, Claude, Cursor, or another MCP client through one temporary encrypted session.", action: "CONNECT AGENT", onClick: onConnector },
-    { done: Boolean(activeMission), number: "03", title: "Choose one real mission", detail: "Start from Technocore, the community Kibble board, or a private task with a clear finish line.", action: "CHOOSE MISSION", onClick: onMission },
+    { done: Boolean(activeMission), number: "03", title: "Find one real mission", detail: "Ask your connected agent to scan Technocore and Kibble, then choose one bounded result.", action: "FIND MISSION", onClick: onMission },
   ];
   return <section className="setup-guide section-pad" aria-label="Agent Guild setup">
     <div className="setup-guide-head"><div><p className="kicker">START HERE · ABOUT 3 MINUTES</p><h2>Make this workspace yours.</h2><p>Nothing public happens during setup. You can leave and continue later from this browser.</p></div></div>
@@ -665,7 +685,7 @@ function RoomGrid({ rooms, total, onInspect, onMore }: { rooms: PublicRoom[]; to
 }
 
 function MissionGrid({ missions, connectedDid, onInspect, snapshot }: { missions: Mission[]; connectedDid: string | null; onInspect: (mission: Mission) => void; snapshot?: KibbleBoardSnapshot }) {
-  if (!missions.length) return <EmptyState icon={<Sparkles />} title="Live board checked — no claimable jobs right now" detail={snapshot?.total ? `The snapshot loaded ${snapshot.total} jobs, but none are open: ${snapshot.claimed} claimed, ${snapshot.attested} attested, and ${snapshot.rejected} rejected. Try again later or give your agent a private mission.` : "Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty."} action="WRITE A PRIVATE MISSION" onAction={() => { document.querySelector<HTMLButtonElement>('.source-tabs button[aria-label="Private missions"]')?.click(); }} />;
+  if (!missions.length) return <EmptyState icon={<Sparkles />} title="Live board checked — no claimable jobs right now" detail={snapshot?.total ? `The snapshot loaded ${snapshot.total} jobs, but none are open: ${snapshot.claimed} claimed, ${snapshot.attested} attested, and ${snapshot.rejected} rejected. Try again later or bring your own task.` : "Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty."} action="BRING MY OWN TASK" onAction={() => { document.querySelector<HTMLButtonElement>('.source-tabs button[aria-label="Bring your own task"]')?.click(); }} />;
   return <div className="card-grid">{missions.map((mission) => {
     const ownJob = Boolean(connectedDid && mission.authorDid === connectedDid);
     return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onInspect(mission)}>{ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
@@ -891,7 +911,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
-  const connectorPackage = "@agent-guild/connector@0.1.0-beta.2";
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.3";
   const pairingHomePath = "$HOME/.agent-guild/agent-guild-pairing.json";
   const movePairingCommand = `mkdir -p "$HOME/.agent-guild" && mv "$HOME/Downloads/agent-guild-pairing.json" "${pairingHomePath}" && chmod 600 "${pairingHomePath}"`;
   const setupCommands = {
@@ -997,6 +1017,10 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
 
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
     <p className="modal-lead">Connect in three small steps. Your AI stays where it already runs; Agent Guild receives only safe mission updates.</p>
+    <div className="mcp-explainer" role="note">
+      <ShieldCheck size={20} />
+      <div><strong>Agent Guild is an MCP connection—not a Codex plugin.</strong><p>Run the connector command, confirm or restart <b>Agent Guild</b> in <b>Settings → MCPs</b>, then open a new local task in the folder where the mission must run.</p></div>
+    </div>
     <p className="panel-kicker">CHOOSE THE AI YOU USE</p>
     <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE CODE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
     <p className="provider-guide-note"><Eye size={17} /><span><strong>SETUP GUIDES ONLY</strong> Choosing a tab changes the instructions. It does not switch your agent or detect which provider is connected.</span></p>
@@ -1021,13 +1045,13 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
             <p>Open Terminal, paste this one line, and press Return. It adds the local Agent Guild connector to {providerName}.</p>
             <div className="command-box"><code>{setupCommands[provider]}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommands[provider]); setCopied("setup"); }} aria-label={`Copy ${providerName} setup command`}>{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
             <p className="fine-print">This command expects the safe location from step 1. It works with {provider === "claude" ? "Claude Code on this computer—not Claude on the web or the Claude chat app" : "Codex on this computer"}.</p>
-            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → Plugins → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
+            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
           </> : connectorPublished && provider === "cursor" ? <div className="preview-setup cursor-setup"><strong>CURSOR · LOCAL STDIO</strong><p>Open <b>Cursor Settings → Tools & MCP → New MCP Server</b>. Add this configuration to <code>~/.cursor/mcp.json</code>, save it, then restart Cursor.</p><div className="command-box"><code>{cursorConfig}</code><button onClick={() => { void navigator.clipboard.writeText(cursorConfig); setCopied("config"); }} aria-label="Copy Cursor MCP configuration">{copied === "config" ? <Check /> : <Clipboard />}</button></div><p className="fine-print">Cursor launches this local process itself. The <code>{'${userHome}'}</code> value points to the safe folder from step 1; no manual path replacement is needed.</p></div> : provider === "codex" ? <div className="preview-setup">
             <strong>PRIVATE BETA SETUP</strong>
             <p>The public connector package is not released yet. This computer must have the Agent Guild project folder.</p>
             <details className="manual-setup" open>
               <summary>ENTER THESE FIELDS IN CODEX</summary>
-              <p>Open <b>Settings → Plugins → MCPs → Add</b>, choose <b>STDIO</b>, then enter:</p>
+              <p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter:</p>
               <dl>
                 <div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div>
                 <div><dt>START COMMAND</dt><dd><code>npm</code></dd></div>
@@ -1045,7 +1069,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
         <div>
           <p className="panel-kicker">CHECK</p>
           <h3>{provider === "codex" || provider === "cursor" ? "Restart" : "Open a new session in"} {providerName}, then check once.</h3>
-          <p>Start a new agent turn and send this message. You do not need to understand the tool name.</p>
+          <p>{provider === "codex" ? "Open a new local Codex task in the exact folder where the mission will run. " : "Start a new agent turn. "}Then send this message; you do not need to understand the tool name.</p>
           <div className="command-box"><code>{checkMessage}</code><button onClick={() => { void navigator.clipboard.writeText(checkMessage); setCopied("check"); }} aria-label="Copy connection check message">{copied === "check" ? <Check /> : <Clipboard />}</button></div>
         </div>
       </section>
@@ -1055,7 +1079,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">{connectorPublished ? "This pinned beta package is the audited nine-tool connector with live read-only discovery." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+    <p className="fine-print">{connectorPublished ? "This pinned beta package is the audited ten-tool connector with live read-only discovery, a universal work policy, and workspace-locked mission starts." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
   </Modal>;
 }
 

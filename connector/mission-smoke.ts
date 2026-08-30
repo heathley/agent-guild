@@ -16,7 +16,9 @@ try {
   if (status.isError || !statusText.includes('"lifecycleState":"mission.selected"') || !statusText.includes('"publicActions":"human-approval-required"')) {
     throw new Error("No fresh DID-bound mission was found in the encrypted inbox.");
   }
-  const started = await client.callTool({ name: "guild_start_run", arguments: { mode: "research" } });
+  const requiredWorkspace = (status.structuredContent as { workspace?: { requiredPath?: string } } | undefined)?.workspace?.requiredPath;
+  if (!requiredWorkspace) throw new Error("The mission did not include an exact workspace lock.");
+  const started = await client.callTool({ name: "guild_start_run", arguments: { mode: "research", workingDirectory: requiredWorkspace } });
   if (started.isError || !JSON.stringify(started).includes('"lifecycleState":"mission.researching"')) {
     throw new Error("The connector did not report the local research lifecycle event.");
   }

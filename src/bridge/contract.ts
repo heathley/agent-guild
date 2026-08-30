@@ -1,8 +1,8 @@
 import { sanitizeSuggestions, type AutonomyMode, type DiscoverySource, type WorkSuggestion } from "./discovery.js";
 
 export const BRIDGE_VERSION = "0.3.0" as const;
-export const ASSIGNMENT_VERSION = "0.1.0" as const;
-export const DISCOVERY_REQUEST_VERSION = "0.1.0" as const;
+export const ASSIGNMENT_VERSION = "0.2.0" as const;
+export const DISCOVERY_REQUEST_VERSION = "0.2.0" as const;
 const DID = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 
 export const AGENT_EVENTS = [
@@ -60,6 +60,10 @@ export type MissionAssignment = {
     risk: "low" | "medium" | "high";
     room?: string;
   };
+  workspace: {
+    requiredPath: string;
+    policy: "exact";
+  };
   publicActions: "human-approval-required";
 };
 
@@ -72,6 +76,7 @@ export type DiscoveryRequest = {
   source: DiscoverySource;
   mode: AutonomyMode;
   skills: string[];
+  workspace?: { requiredPath: string; policy: "exact" };
   publicActions: "human-approval-required";
 };
 
@@ -91,7 +96,8 @@ export function sanitizeMissionAssignment(input: unknown): MissionAssignment | n
       !Array.isArray(mission.successCriteria) || mission.successCriteria.length < 1 || mission.successCriteria.length > 8 ||
       mission.successCriteria.some((item) => typeof item !== "string" || !item.trim() || item.length > 500) ||
       typeof mission.verification !== "string" || !["low", "medium", "high"].includes(mission.risk as string) ||
-      (mission.room !== undefined && (typeof mission.room !== "string" || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(mission.room)))
+      (mission.room !== undefined && (typeof mission.room !== "string" || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(mission.room))) ||
+      !value.workspace || value.workspace.policy !== "exact" || !normalizeWorkspacePath(value.workspace.requiredPath)
   ) return null;
   return {
     version: ASSIGNMENT_VERSION,
@@ -105,8 +111,20 @@ export function sanitizeMissionAssignment(input: unknown): MissionAssignment | n
       verification: clean(mission.verification, 500), risk: mission.risk,
       ...(mission.room ? { room: mission.room } : {}),
     },
+    workspace: { requiredPath: normalizeWorkspacePath(value.workspace.requiredPath)!, policy: "exact" },
     publicActions: "human-approval-required",
   };
+}
+
+export function normalizeWorkspacePath(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const value = input.trim().replaceAll("\\", "/");
+  if (!value || value.length > 1024 || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(value)) return null;
+  const absolute = value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+  if (!absolute || value.split("/").some((part) => part === "." || part === "..")) return null;
+  const collapsed = value.replace(/\/{2,}/g, "/");
+  const normalized = collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
+  return /^[A-Za-z]:\//.test(normalized) ? `${normalized[0].toLowerCase()}${normalized.slice(1)}` : normalized;
 }
 
 export function sanitizeDiscoveryRequest(input: unknown): DiscoveryRequest | null {
@@ -117,9 +135,13 @@ export function sanitizeDiscoveryRequest(input: unknown): DiscoveryRequest | nul
       !Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= Date.parse(value.createdAt) || typeof value.agentDid !== "string" || !DID.test(value.agentDid) ||
       !["all", "technocore", "kibble"].includes(value.source || "") || !["suggest", "local-autonomy"].includes(value.mode || "") ||
       !Array.isArray(value.skills) || value.skills.length > 8 || value.skills.some((item) => typeof item !== "string" || !item.trim() || item.length > 40) ||
+      (value.workspace !== undefined && (value.workspace.policy !== "exact" || !normalizeWorkspacePath(value.workspace.requiredPath))) ||
+      (value.mode === "local-autonomy" && !value.workspace) ||
       value.publicActions !== "human-approval-required") return null;
   return { version: DISCOVERY_REQUEST_VERSION, requestId: clean(value.requestId, 96), createdAt: new Date(value.createdAt).toISOString(), expiresAt: new Date(value.expiresAt).toISOString(),
-    agentDid: value.agentDid, source: value.source as DiscoverySource, mode: value.mode as AutonomyMode, skills: value.skills.map((item) => clean(item, 40)), publicActions: "human-approval-required" };
+    agentDid: value.agentDid, source: value.source as DiscoverySource, mode: value.mode as AutonomyMode, skills: value.skills.map((item) => clean(item, 40)),
+    ...(value.workspace ? { workspace: { requiredPath: normalizeWorkspacePath(value.workspace.requiredPath)!, policy: "exact" as const } } : {}),
+    publicActions: "human-approval-required" };
 }
 
 export function sanitizeConnectorCommand(input: unknown): ConnectorCommand | null {
