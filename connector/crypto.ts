@@ -1,6 +1,7 @@
 import { createHash, randomBytes, webcrypto } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { sanitizeMissionAssignment, type MissionAssignment } from "../src/bridge/contract.js";
+import { sanitizeConnectorCommand, sanitizeMissionAssignment, type ConnectorCommand, type MissionAssignment } from "../src/bridge/contract.js";
+import { sanitizeDiscoverySnapshot, type DiscoverySnapshot, type DiscoverySource } from "../src/bridge/discovery.js";
 
 export type EncryptedConnectorEvent = {
   version: 1;
@@ -94,7 +95,23 @@ export async function pollRelayCommands(pairing: ConnectorPairingFile, after: nu
   return Array.isArray(result.events) ? result.events : [];
 }
 
+export async function fetchDiscoverySnapshot(pairing: ConnectorPairingFile, source: DiscoverySource): Promise<DiscoverySnapshot> {
+  validateConnectorPairing(pairing);
+  const response = await fetch(`${pairing.relayUrl}/api/discovery/work?source=${encodeURIComponent(source)}`, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`Agent Guild discovery is unavailable (${response.status}).`);
+  const snapshot = sanitizeDiscoverySnapshot(await response.json());
+  if (!snapshot) throw new Error("Agent Guild discovery returned an invalid snapshot.");
+  return snapshot;
+}
+
 export async function decryptRelayedMission(pairing: ConnectorPairingFile, command: RelayedCommand): Promise<MissionAssignment> {
+  const value = await decryptRelayedCommand(pairing, command);
+  const assignment = sanitizeMissionAssignment(value);
+  if (!assignment) throw new Error("Encrypted command is not a mission assignment.");
+  return assignment;
+}
+
+export async function decryptRelayedCommand(pairing: ConnectorPairingFile, command: RelayedCommand): Promise<ConnectorCommand> {
   validateConnectorPairing(pairing);
   const envelope = command.envelope;
   if (envelope.version !== 1 || envelope.eventId.length < 8) throw new Error("Encrypted mission envelope is malformed.");
@@ -104,11 +121,12 @@ export async function decryptRelayedMission(pairing: ConnectorPairingFile, comma
     const plaintext = await webcrypto.subtle.decrypt(
       { name: "AES-GCM", iv: Buffer.from(envelope.iv, "base64url") }, key, Buffer.from(envelope.ciphertext, "base64url"),
     );
-    const assignment = sanitizeMissionAssignment(JSON.parse(new TextDecoder().decode(plaintext)));
-    if (!assignment || assignment.assignmentId !== envelope.eventId) throw new Error("Mission assignment failed the strict allowlist.");
-    if (assignment.agentDid !== pairing.agentDid) throw new Error("Mission assignment DID does not match the paired agent.");
-    if (Date.parse(assignment.expiresAt) <= Date.now()) throw new Error("Mission assignment expired.");
-    return assignment;
+    const value = sanitizeConnectorCommand(JSON.parse(new TextDecoder().decode(plaintext)));
+    const commandId = value && "assignmentId" in value ? value.assignmentId : value?.requestId;
+    if (!value || commandId !== envelope.eventId) throw new Error("Agent command failed the strict allowlist.");
+    if (value.agentDid !== pairing.agentDid) throw new Error("Agent command DID does not match the paired agent.");
+    if (Date.parse(value.expiresAt) <= Date.now()) throw new Error("Agent command expired.");
+    return value;
   } finally {
     keyBytes.fill(0);
   }

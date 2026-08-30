@@ -11,5 +11,5 @@
     "outDir": "packages/connector/dist",
     "types": ["node"]
   },
-  "include": ["connector/index.ts", "connector/crypto.ts", "src/bridge/contract.ts"]
+  "include": ["connector/index.ts", "connector/crypto.ts", "src/bridge/contract.ts", "src/bridge/discovery.ts"]
 }

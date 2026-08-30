@@ -36,6 +36,15 @@ export async function deleteLocalIdentity(): Promise<void> {
   }
 }
 
+export async function deleteLocalWorkspaceDatabase(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(DATABASE);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error("Local workspace deletion failed."));
+    request.onblocked = () => reject(new Error("Close other Agent Guild tabs, then try again."));
+  });
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, 2);

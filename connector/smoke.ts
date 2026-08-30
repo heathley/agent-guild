@@ -13,7 +13,7 @@ try {
   const names = tools.map((tool) => tool.name).sort();
   const expected = [
     "guild_attach_evidence", "guild_propose_mission", "guild_report_progress", "guild_request_public_action",
-    "guild_request_review", "guild_scan_work", "guild_start_run", "guild_status",
+    "guild_request_review", "guild_scan_work", "guild_start_run", "guild_status", "guild_suggest_work",
   ].sort();
   if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error(`Unexpected MCP tools: ${names.join(", ")}`);
   const status = await client.callTool({ name: "guild_status", arguments: {} });

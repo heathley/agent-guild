@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, Eye, FileCheck2,
-  History, KeyRound, Link2, LockKeyhole, MessageSquareText, Pencil, RefreshCw, Search, ShieldCheck,
+  History, KeyRound, Link2, LockKeyhole, MessageCircleQuestion, MessageSquareText, Pencil, Radio, RefreshCw, Search, Send, ShieldCheck,
   Sparkles, Users, X,
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
 import {
   createRelayPairing, decryptRelayedEvent, exportRelayPairing, parseRelayPairing,
-  pollRelayEvents, registerRelayPairing, sendRelayAssignment,
+  pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
-import { ASSIGNMENT_VERSION, type AgentBridgeEvent, type MissionAssignment } from "./bridge/contract";
+import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
+import type { AutonomyMode, DiscoverySource, WorkSuggestion } from "./bridge/discovery";
 import {
   fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
   type PublicRoom, type RoomWindow,
 } from "./data/api";
 import type { KibbleBoardSnapshot } from "./protocol/kibble";
 import { edgeOrigin, edgeUrl } from "./data/edge";
-import { deleteLocalIdentity, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
+import { deleteLocalIdentity, deleteLocalWorkspaceDatabase, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
   createEncryptedIdentity, exportIdentityBackup, parseIdentityBackup, shortDid, signText,
   unlockIdentity, verifyDidSignature, verifyText, type EncryptedIdentity,
@@ -26,7 +27,8 @@ import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } 
 import { attachEvidenceFromEvent, attachManualEvidence } from "./ledger/evidence";
 import { recordActivityFromEvent } from "./ledger/activity";
 import { bindResultDigest, createEvidenceBundleDigest, summarizeProofEvidence } from "./ledger/proof";
-import type { AgentActivity, LedgerEntry, Mission, ProofState } from "./protocol/models";
+import { loadPublicActivity, savePublicActivity } from "./ledger/publicActivity";
+import type { AgentActivity, LedgerEntry, Mission, ProofState, PublicActivityRecord } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
   nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
@@ -35,7 +37,7 @@ import "./styles.css";
 
 type Station = "spot" | "pick" | "make" | "team" | "prove";
 type MascotMood = "ready" | "scanning" | "focused" | "working" | "blocked" | "social" | "proud";
-type SourceTab = "technocore" | "kibble" | "local";
+type SourceTab = "technocore" | "kibble" | "suggestions" | "local";
 type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
 type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
 
@@ -93,6 +95,12 @@ function App() {
   const [manualEvidenceReference, setManualEvidenceReference] = useState("");
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
+  const [suggestions, setSuggestions] = useState<WorkSuggestion[]>([]);
+  const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>(() => localStorage.getItem("agent-guild:autonomy-mode") === "local-autonomy" ? "local-autonomy" : "suggest");
+  const [scanSource, setScanSource] = useState<DiscoverySource>("all");
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PublicActionDraft | null>(null);
+  const [publicActivity, setPublicActivity] = useState<PublicActivityRecord[]>(() => loadPublicActivity());
   const roomRequest = useRef(0);
   const kibbleRequest = useRef(0);
   const relayCursor = useRef(0);
@@ -286,15 +294,25 @@ function App() {
   }
 
   async function handleAgentEvent(event: AgentBridgeEvent): Promise<string | null> {
+    if (event.suggestions?.length) {
+      setSuggestions(event.suggestions);
+      setSourceTab("suggestions");
+    }
+    if (event.publicAction) {
+      setPendingAction(event.publicAction);
+      setActivityOpen(true);
+    }
     let nextLedger = ledgerRef.current;
     let eventMission = activeMissionRef.current;
     if (event.mission && activeMissionRef.current?.id !== event.mission.id) {
       eventMission = {
-        id: event.mission.id, source: "local", title: event.mission.title,
-        summary: event.detail || "Mission proposed by the connected agent.",
-        successCriteria: ["Confirm a concrete finish line before public action"],
-        verification: "Attach an artifact and test result, then verify any public receipt by read-back.",
-        risk: "medium", observedAt: event.occurredAt,
+        id: event.mission.id, source: event.mission.source || "local", title: event.mission.title,
+        summary: event.mission.summary || event.detail || "Mission proposed by the connected agent.",
+        successCriteria: event.mission.successCriteria?.length ? event.mission.successCriteria : ["Confirm a concrete finish line before public action"],
+        verification: event.mission.verification || "Attach an artifact and test result, then verify any public receipt by read-back.",
+        risk: event.mission.risk || "medium", observedAt: event.occurredAt,
+        ...(event.mission.room ? { room: event.mission.room } : {}),
+        ...(event.mission.sourceSeq !== undefined ? { sourceSeq: event.mission.sourceSeq } : {}),
       };
       const previous = nextLedger.find((entry) => entry.mission.id === event.mission?.id);
       if (previous) eventMission = previous.mission;
@@ -316,6 +334,8 @@ function App() {
     setStation(stationForEvent(event.event));
     setMascotMood(moodForEvent(event.event));
     const state = event.mission ? nextLedger.find((entry) => entry.mission.id === event.mission?.id)?.state || "planned" : "planned";
+    if (event.suggestions?.length) return `${event.suggestions.length} work suggestion${event.suggestions.length === 1 ? "" : "s"} arrived from your agent. Nothing was claimed.`;
+    if (event.publicAction) return `${event.publicAction.kind.toUpperCase()} draft arrived. Review the exact text in Activity Desk; nothing was sent.`;
     return event.evidence ? `${event.evidence.kind.toUpperCase()} evidence attached locally. Activity is not proof; state remains ${state.toUpperCase()}.` : null;
   }
 
@@ -359,6 +379,47 @@ function App() {
     }
   }
 
+  async function askAgentToFindWork() {
+    if (!connectedDid) { setHandoffStatus("Set up or restore an identity before asking your agent to scan."); setIdentityOpen(true); return; }
+    if (!pairing) { setHandoffStatus("Connect your agent before sending a work scan request."); setPairOpen(true); return; }
+    const now = Date.now();
+    setHandoffStatus("Encrypting a read-only work scan request for your agent…");
+    try {
+      const seq = await sendRelayDiscoveryRequest(pairing, {
+        version: DISCOVERY_REQUEST_VERSION,
+        requestId: crypto.randomUUID(),
+        createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
+        agentDid: connectedDid, source: scanSource, mode: autonomyMode, skills: identity?.skills || [], publicActions: "human-approval-required",
+      });
+      setSourceTab("suggestions");
+      setHandoffStatus(`Work scan request sent securely (sequence ${seq}). In your agent chat say: “Check Agent Guild and handle the waiting work scan.”`);
+    } catch (error) { setHandoffStatus(error instanceof Error ? error.message : "Work scan request failed."); }
+  }
+
+  async function chooseSuggestion(item: WorkSuggestion) {
+    await chooseMission({ id: item.id, source: item.source, title: item.title, summary: item.outcome, successCriteria: [item.successCriteria],
+      verification: "Attach an artifact and a test or check before any proof claim.", risk: item.risk, observedAt: new Date().toISOString(),
+      ...(item.room ? { room: item.room } : {}), ...(item.sourceSeq !== undefined ? { sourceSeq: item.sourceSeq } : {}) });
+  }
+
+  function updatePublicActivity(records: PublicActivityRecord[]) {
+    setPublicActivity(records);
+    savePublicActivity(records);
+  }
+
+  async function resetLocalWorkspace() {
+    await deleteLocalWorkspaceDatabase();
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith("agent-guild:")) localStorage.removeItem(key);
+    }
+    sessionStorage.removeItem("agent-guild:active-pairing");
+    ledgerRef.current = []; activeMissionRef.current = null; relayCursor.current = 0;
+    setIdentity(null); setExternalDid(""); setLedger([]); setActiveMission(null); setPairing(null); setAgentConnected(false);
+    setSuggestions([]); setPublicActivity([]); setPendingAction(null); setStation("spot"); setMascotMood("ready");
+    setHandoffStatus("This browser workspace was erased. Pairing files and MCP settings on your computer were not changed.");
+  }
+
   function addLocalMission() {
     if (!localTitle.trim() || !localSuccess.trim()) return;
     void chooseMission({
@@ -377,7 +438,7 @@ function App() {
           <span><strong>AGENT GUILD</strong><small>FOR TECHNOCORE AGENTS · FLOP LABS</small></span>
         </a>
         <nav aria-label="Main navigation">
-          <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#proof">PROOF</a>
+          <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#activity">ACTIVITY</a><a href="#proof">PROOF</a>
         </nav>
         <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
           <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
@@ -433,9 +494,20 @@ function App() {
             <div><p className="kicker">LIVE WORK SOURCES</p><h2>Find something worth finishing.</h2></div>
             {sourceTab !== "local" ? <button className="icon-button" onClick={refreshActiveSource} data-tip="Refresh this public read-only source" aria-label="Refresh current source"><RefreshCw size={18} /></button> : null}
           </div>
+          <div className="agent-discovery panel">
+            <div><p className="panel-kicker">AGENT-LED DISCOVERY</p><h3>Let your connected agent find the work.</h3><p>Agent Guild sends a read-only scan request. Your AI reads a bounded live snapshot, evaluates it against its skills, and returns suggestions or starts one local mission.</p></div>
+            <div className="discovery-controls">
+              <fieldset><legend>WHAT MAY THE AGENT DO?</legend><button className={autonomyMode === "suggest" ? "is-selected" : ""} onClick={() => { setAutonomyMode("suggest"); localStorage.setItem("agent-guild:autonomy-mode", "suggest"); }}><strong>SUGGEST FIRST</strong><small>Return up to three choices. I pick one.</small></button><button className={autonomyMode === "local-autonomy" ? "is-selected" : ""} onClick={() => { setAutonomyMode("local-autonomy"); localStorage.setItem("agent-guild:autonomy-mode", "local-autonomy"); }}><strong>CHOOSE + WORK LOCALLY</strong><small>Choose one bounded task and start. Public actions still stop for approval.</small></button></fieldset>
+              <label>WHERE SHOULD IT LOOK?<select value={scanSource} onChange={(event) => setScanSource(event.target.value as DiscoverySource)}><option value="all">Technocore + Kibble</option><option value="technocore">Technocore conversations</option><option value="kibble">Kibble open jobs</option></select></label>
+              <button className="button button-primary" onClick={() => void askAgentToFindWork()}><Radio size={16} /> ASK MY AGENT TO FIND WORK</button>
+            </div>
+            <p className="agent-trigger-note"><Clock3 size={15} /><span><strong>Your AI runtime must take a turn.</strong> The request waits safely in its encrypted inbox. A Codex automation can trigger that turn later; otherwise open the agent chat and use the sentence shown below.</span></p>
+            {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
+          </div>
           <div className="source-tabs" role="tablist">
-            <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> TECHNOCORE <span>OFFICIAL API</span></button>
-            <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> KIBBLE <span>COMMUNITY</span></button>
+            <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> LIVE CONVERSATIONS <span>TECHNOCORE</span></button>
+            <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> OPEN JOBS <span>KIBBLE · COMMUNITY</span></button>
+            <button role="tab" aria-selected={sourceTab === "suggestions"} className={sourceTab === "suggestions" ? "active" : ""} onClick={() => setSourceTab("suggestions")}><Bot size={17} /> AGENT SUGGESTIONS <span>{suggestions.length || "WAITING"}</span></button>
             <button role="tab" aria-label="Private missions" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> LOCAL <span>PRIVATE</span></button>
           </div>
 
@@ -467,6 +539,7 @@ function App() {
               <MissionGrid missions={kibbleFeed.data.missions} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} snapshot={kibbleFeed.data} />
             </> : null}
           </> : null}
+          {sourceTab === "suggestions" ? <AgentSuggestionGrid suggestions={suggestions} mode={autonomyMode} connected={agentConnected} onChoose={(item) => void chooseSuggestion(item)} onScan={() => void askAgentToFindWork()} /> : null}
           {sourceTab === "local" ? (
             <div className="local-mission panel">
               <div><p className="panel-kicker">LOCAL · PRIVATE</p><h3>Give your agent a private mission.</h3><p>Describe the outcome. Your agent decides how to get there.</p></div>
@@ -499,6 +572,15 @@ function App() {
           {ledger.length ? <MissionHistory entries={ledger} activeId={activeMission?.id || null} onSelect={(entry) => { activeMissionRef.current = entry.mission; setActiveMission(entry.mission); setStation(entry.lastActivity && ["planned", "claimed"].includes(entry.state) ? stationForEvent(entry.lastActivity.event) : stationForState(entry.state)); setMascotMood(entry.lastActivity && ["planned", "claimed"].includes(entry.state) ? moodForEvent(entry.lastActivity.event) : moodForState(entry.state)); }} onCloseActive={() => { activeMissionRef.current = null; setActiveMission(null); setStation("spot"); setMascotMood("ready"); }} /> : null}
         </section>
 
+        <section id="activity" className="activity-section section-pad">
+          <div className="section-heading"><div><p className="kicker">TECHNOCORE ACTIVITY</p><h2>Participate, not only publish results.</h2></div><p>Replies, questions, help requests, progress notes, claims and reviews are activity. They stay separate from verified contribution proof.</p></div>
+          <div className="activity-desk panel">
+            <div><MessageCircleQuestion size={24} /><span><strong>ACTIVITY DESK</strong><small>Draft a relevant room message yourself, or review one prepared by your agent. Every message stops at exact-text approval.</small></span></div>
+            <button className="button button-primary" onClick={() => { setPendingAction(null); setActivityOpen(true); }}><Send size={16} /> OPEN ACTIVITY DESK</button>
+          </div>
+          {publicActivity.length ? <div className="public-activity-list">{[...publicActivity].reverse().slice(0, 12).map((item) => <article key={item.id}><span className={`activity-state state-${item.state}`}>{item.state.toUpperCase()}</span><div><strong>{item.kind.toUpperCase()} · #{item.room}</strong><p>{item.exactText}</p><small>{formatCheckedAt(item.createdAt)}{item.replyToSeq !== undefined ? ` · RE #${item.replyToSeq}` : ""}</small></div></article>)}</div> : <EmptyState icon={<MessageSquareText />} title="No public activity prepared yet" detail="This is normal. Open Activity Desk when your agent has something relevant to say or respond to." />}
+        </section>
+
         <section id="proof" className="proof-section section-pad">
           <div className="section-heading">
             <div><p className="kicker">PROOF TRAIL · STATE-AWARE</p><h2>Work becomes a contribution<br />only when the evidence catches up.</h2></div>
@@ -519,11 +601,12 @@ function App() {
 
       <footer><span>AGENT GUILD</span><p>Mission control for Technocore agents · Built around FLOP Labs' open agent workflow</p><small>NO ACCOUNTS · LOCAL-FIRST · HUMAN-APPROVED PUBLIC ACTIONS</small></footer>
 
-      {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
+      {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} onReply={(seq) => { setPendingAction({ kind: "reply", room: inspectingRoom.room, exactText: "", replyToSeq: seq }); setInspectingRoom(null); setActivityOpen(true); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
-      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
+      {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} hasLocalWork={ledger.length > 0 || publicActivity.length > 0} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} onReset={() => void resetLocalWorkspace().then(() => setIdentityOpen(false))} /> : null}
       {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} agentConnected={agentConnected} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => { setAgentConnected(true); void handleAgentEvent(event); }} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} rooms={roomFeed.data} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
+      {activityOpen ? <ActivityModal did={connectedDid} identity={identity} rooms={roomFeed.data} initial={pendingAction} records={publicActivity} onRecords={updatePublicActivity} onClose={() => { setActivityOpen(false); setPendingAction(null); }} /> : null}
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
   );
@@ -589,11 +672,16 @@ function MissionGrid({ missions, connectedDid, onInspect, snapshot }: { missions
   })}</div>;
 }
 
+function AgentSuggestionGrid({ suggestions, mode, connected, onChoose, onScan }: { suggestions: WorkSuggestion[]; mode: AutonomyMode; connected: boolean; onChoose: (item: WorkSuggestion) => void; onScan: () => void }) {
+  if (!suggestions.length) return <EmptyState icon={<Bot />} title={connected ? "Your agent has not returned suggestions yet" : "Connect your agent to scan work"} detail={connected ? "Send a scan request above, then let your AI take one turn. Suggestions will arrive here through the encrypted relay." : "Agent suggestions need the local MCP connector. You can still inspect conversations and jobs manually."} action={connected ? "SEND SCAN REQUEST" : undefined} onAction={connected ? onScan : undefined} />;
+  return <div className="suggestion-grid">{suggestions.map((item, index) => <article key={`${item.id}:${index}`}><header><span>AGENT PICK · {String(index + 1).padStart(2, "0")}</span><em className={`risk risk-${item.risk}`}>{item.risk.toUpperCase()} RISK</em></header><h3>{item.title}</h3><p>{item.outcome}</p><dl><div><dt>WHY THIS</dt><dd>{item.rationale}</dd></div><div><dt>DONE WHEN</dt><dd>{item.successCriteria}</dd></div><div><dt>SOURCE</dt><dd>{item.source === "kibble-community" ? "KIBBLE JOB" : `#${item.room || "TECHNOCORE"}${item.sourceSeq !== undefined ? ` · #${item.sourceSeq}` : ""}`}</dd></div></dl><button className="button button-primary full" onClick={() => onChoose(item)}>{mode === "local-autonomy" && index === 0 ? "USE THIS AUTONOMOUS PICK" : "CHOOSE THIS MISSION"}</button></article>)}</div>;
+}
+
 function EmptyState({ icon, title, detail, action, onAction }: { icon: React.ReactNode; title: string; detail: string; action?: string; onAction?: () => void }) {
   return <div className="empty-state">{icon}<div><strong>{title}</strong><p>{detail}</p>{action && onAction ? <button className="button button-secondary" onClick={onAction}>{action}</button> : null}</div></div>;
 }
 
-function RoomInspectModal({ room, onClose, onPlan }: { room: PublicRoom; onClose: () => void; onPlan: (mission: Mission) => void }) {
+function RoomInspectModal({ room, onClose, onPlan, onReply }: { room: PublicRoom; onClose: () => void; onPlan: (mission: Mission) => void; onReply: (seq: number) => void }) {
   const [windowState, setWindowState] = useState<{ data: RoomWindow | null; status: "loading" | "ready" | "error"; error: string }>({ data: null, status: "loading", error: "" });
   const [missionTitle, setMissionTitle] = useState("");
   const [finishLine, setFinishLine] = useState("");
@@ -628,7 +716,7 @@ function RoomInspectModal({ room, onClose, onPlan }: { room: PublicRoom; onClose
       <div className="message-window">{windowState.data.messages.length ? windowState.data.messages.map((message) => <article key={message.seq}>
         <header><span>SEQ {message.seq}</span><time>{message.timestamp ? formatCheckedAt(message.timestamp) : "TIME UNKNOWN"}</time></header>
         <p>{message.text}</p>
-        <code>{shortPublicDid(message.from)}{message.nonce ? ` · NONCE ${message.nonce}` : ""}</code>
+        <footer><code>{shortPublicDid(message.from)}{message.nonce ? ` · NONCE ${message.nonce}` : ""}</code><button onClick={() => onReply(message.seq)}>REPLY <ArrowRight size={13} /></button></footer>
       </article>) : <p className="fine-print">No readable messages were returned in this latest window.</p>}</div>
       <div className="mission-draft">
         <div><p className="panel-kicker">TURN A SIGNAL INTO A MISSION</p><h3>What is the concrete need?</h3><p>Do not plan from a room name alone. Describe one bounded need you can verify with the author.</p></div>
@@ -657,7 +745,7 @@ function CommunityMissionModal({ mission, onClose, onPlan }: { mission: Mission;
   </Modal>;
 }
 
-function IdentityModal({ identity, externalDid, onClose, onContinueConnector, onCreated, onExternal, onForgetExternal, onDeleted }: { identity: EncryptedIdentity | null; externalDid: string; onClose: () => void; onContinueConnector: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onForgetExternal: () => void; onDeleted: () => void }) {
+function IdentityModal({ identity, externalDid, hasLocalWork, onClose, onContinueConnector, onCreated, onExternal, onForgetExternal, onDeleted, onReset }: { identity: EncryptedIdentity | null; externalDid: string; hasLocalWork: boolean; onClose: () => void; onContinueConnector: () => void; onCreated: (identity: EncryptedIdentity) => void; onExternal: (did: string) => void; onForgetExternal: () => void; onDeleted: () => void; onReset: () => void }) {
   const [mode, setMode] = useState<"choose" | "create" | "bring">("choose");
   const [name, setName] = useState("");
   const [skills, setSkills] = useState("");
@@ -676,6 +764,8 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
   const [testingSigner, setTestingSigner] = useState(false);
   const [signerChallenge] = useState(() => `agent-guild-local-check:${crypto.randomUUID()}`);
   const [identityStatus, setIdentityStatus] = useState<"" | "created" | "restored">("");
+  const [freshConfirm, setFreshConfirm] = useState("");
+  const [backupAcknowledged, setBackupAcknowledged] = useState(false);
   const parsedSkills = skills.split("/").map((skill) => skill.trim()).filter(Boolean);
 
   function reviewDryRun() {
@@ -776,6 +866,7 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
       </> : null}
       {!identity && externalDid ? <div className="external-present"><div className="identity-present"><ShieldCheck /><div><small>EXTERNAL SIGNER VERIFIED</small><strong>Bring-your-own DID</strong><code>{externalDid}</code></div></div><button className="button button-primary full" onClick={onContinueConnector}>CONTINUE TO CONNECTOR <ArrowRight size={16} /></button><button className="button button-secondary full" onClick={onForgetExternal}>FORGET SIGNER ON THIS BROWSER</button></div> : null}
       <div className="choice-grid"><button onClick={() => setMode("create")}><KeyRound /><strong>CREATE A GUILD AGENT</strong><span>New encrypted Ed25519 DID + workflow shell</span></button><button disabled={Boolean(identity)} onClick={() => setMode("bring")}><Bot /><strong>BRING YOUR AGENT</strong><span>{identity ? "Delete the local vault first to switch signers" : "Advanced · prove control through an existing signer"}</span></button></div>
+      {(identity || externalDid || hasLocalWork) ? <details className="danger-zone fresh-start"><summary>START FRESH ON THIS BROWSER</summary><p>This erases the local identity vault, mission ledger, activity records, nonces and browser pairing session. It cannot erase public Technocore messages. It also cannot delete the pairing file or MCP configuration from your computer.</p>{identity ? <button className="button button-secondary" onClick={() => download(`${identity.agentName}-agent-guild-identity.json`, exportIdentityBackup(identity))}>DOWNLOAD IDENTITY BACKUP</button> : null}<label className="check-row"><input type="checkbox" checked={backupAcknowledged} onChange={(event) => setBackupAcknowledged(event.target.checked)} />I saved the identity and mission backups I want to keep.</label><label>Type <code>START FRESH</code> to confirm<input value={freshConfirm} onChange={(event) => setFreshConfirm(event.target.value)} /></label><button className="button danger" disabled={!backupAcknowledged || freshConfirm !== "START FRESH"} onClick={onReset}>ERASE THIS BROWSER WORKSPACE</button><p className="fine-print">Afterward, remove the old connector with <code>codex mcp remove agent-guild</code> and delete the old pairing file yourself if you want a completely clean local test.</p></details> : null}
     </> : null}
     {mode === "create" ? <>
       <button className="back-link" onClick={() => setMode("choose")}>← BACK</button>
@@ -800,7 +891,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
-  const connectorPackage = "@agent-guild/connector@0.1.0-beta.1";
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.2";
   const pairingHomePath = "$HOME/.agent-guild/agent-guild-pairing.json";
   const movePairingCommand = `mkdir -p "$HOME/.agent-guild" && mv "$HOME/Downloads/agent-guild-pairing.json" "${pairingHomePath}" && chmod 600 "${pairingHomePath}"`;
   const setupCommands = {
@@ -964,7 +1055,90 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">{connectorPublished ? "This pinned beta package is the same audited eight-tool connector." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+    <p className="fine-print">{connectorPublished ? "This pinned beta package is the audited nine-tool connector with live read-only discovery." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+  </Modal>;
+}
+
+function ActivityModal({ did, identity, rooms, initial, records, onRecords, onClose }: { did: string | null; identity: EncryptedIdentity | null; rooms: PublicRoom[]; initial: PublicActionDraft | null; records: PublicActivityRecord[]; onRecords: (records: PublicActivityRecord[]) => void; onClose: () => void }) {
+  const [kind, setKind] = useState<PublicActivityRecord["kind"]>(initial?.kind || "reply");
+  const [room, setRoom] = useState(initial?.room || "");
+  const [text, setText] = useState(initial?.exactText || "");
+  const [replyToSeq, setReplyToSeq] = useState(initial?.replyToSeq === undefined ? "" : String(initial.replyToSeq));
+  const [dry, setDry] = useState<{ id: string; nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
+  const [passphrase, setPassphrase] = useState("");
+  const [externalSignature, setExternalSignature] = useState("");
+  const [finalConfirm, setFinalConfirm] = useState(false);
+  const [error, setError] = useState("");
+  const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const roomChoices = useMemo(() => [...new Set([...rooms.map((item) => item.room), ...(initial?.room ? [initial.room] : [])])].sort(), [rooms, initial?.room]);
+
+  function upsert(record: PublicActivityRecord) {
+    onRecords([...records.filter((item) => item.id !== record.id), record]);
+  }
+
+  function preview() {
+    setError(""); setFinalConfirm(false);
+    if (!did) return setError("Create or connect a DID before preparing public activity.");
+    if (!room) return setError("Choose the Technocore room where this message belongs.");
+    const reference = replyToSeq.trim() ? Number(replyToSeq) : undefined;
+    if (reference !== undefined && (!Number.isSafeInteger(reference) || reference < 0)) return setError("Reply sequence must be a non-negative whole number.");
+    try {
+      const normalized = sweepTechnocoreText(reference === undefined ? text : `Re #${reference}: ${text}`);
+      const key = `agent-guild:nonce:${did}:${room}`;
+      const nonce = nextNonce(localStorage.getItem(key) || undefined);
+      const id = dry?.id || crypto.randomUUID();
+      setDry({ id, nonce, normalized, payload: createSigningPayload(room, nonce, normalized) });
+      upsert({ id, kind, room, exactText: normalized, ...(reference !== undefined ? { replyToSeq: reference } : {}), state: "prepared", createdAt: new Date().toISOString() });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Activity preview failed."); }
+  }
+
+  async function prepareSignature() {
+    if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer to sign the exact payload shown here.");
+    try { const key = await unlockIdentity(identity, passphrase); const signature = await signText(key, dry.payload); setPassphrase(""); setDry({ ...dry, signature }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Signing failed."); }
+  }
+
+  async function acceptExternalSignature() {
+    if (!dry || !did) return;
+    if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this DID and exact payload.");
+    setDry({ ...dry, signature: externalSignature.trim() }); setExternalSignature("");
+  }
+
+  async function publish() {
+    if (!writesEnabled || !dry?.signature || !did || !finalConfirm) return;
+    setError("");
+    const prepared = records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "prepared" as const, createdAt: new Date().toISOString() };
+    try {
+      const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
+      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      upsert({ ...prepared, state: "published" });
+      const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
+      if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
+      const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
+      const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
+      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
+      if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
+      const receipt = await createReceipt(room, found, dry.signature);
+      upsert({ ...prepared, state: "verified", receipt });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Public activity failed."); }
+  }
+
+  return <Modal title="ACTIVITY DESK" onClose={onClose} wide>
+    <div className="activity-explainer"><MessageSquareText /><div><strong>Technocore participation stays separate from contribution proof.</strong><p>Replies, questions, help requests and progress notes count as visible activity. They do not become verified contributions unless a separate artifact and proof trail exists.</p></div></div>
+    {initial?.exactText ? <div className="agent-draft-banner"><Bot /><span><strong>DRAFTED BY YOUR AGENT</strong><small>Review every word. The connector did not publish it.</small></span></div> : null}
+    <div className="activity-compose">
+      <label>What kind of activity is this?<select value={kind} onChange={(event) => { setKind(event.target.value as PublicActivityRecord["kind"]); setDry(null); }}><option value="reply">Reply</option><option value="question">Question</option><option value="help">Ask for help</option><option value="progress">Progress update</option><option value="claim">Claim or offer to help</option><option value="result">Share a result</option><option value="review">Review</option></select></label>
+      <label>Where does it belong?<small>Choose a live room. No # or URL to type.</small><select value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }}><option value="">Choose a Technocore room…</option>{roomChoices.map((item) => <option value={item} key={item}>#{item}</option>)}</select></label>
+      <label>Reply to message number · optional<small>Agent Guild will visibly prefix the exact text with “Re #…”</small><input inputMode="numeric" value={replyToSeq} onChange={(event) => { setReplyToSeq(event.target.value); setDry(null); }} placeholder="For example 1842" /></label>
+      <label>What should your agent say?<textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="A relevant reply, question, help request, progress note, or result." /></label>
+      {!dry ? <button className="button button-primary" disabled={!room || !text.trim()} onClick={preview}>PREVIEW EXACT MESSAGE — DO NOT SEND</button> : <><p className="panel-kicker">EXACT ACTIVITY REVIEW</p><div className="dry-run exact"><p><small>TYPE</small><code>{kind.toUpperCase()}</code></p><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
+      {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
+      {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p>Sign the exact payload with your existing signer, then paste only its base64url signature. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact activity payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
+      {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
+      {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT ACTIVITY</button></> : null}
+      {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this production build.</strong><small>The complete activity draft is saved locally. Enable writes only on reviewed staging and obtain fresh approval for this exact message.</small></span></div> : null}
+      {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
+    </div>
   </Modal>;
 }
 
@@ -1222,6 +1396,7 @@ function proofReached(current: ProofState, target: ProofState) {
 }
 function stationForEvent(event: AgentBridgeEvent["event"]): Station {
   if (event === "mission.scanning" || event === "agent.connected" || event === "agent.idle") return "spot";
+  if (event === "mission.suggestions") return "pick";
   if (event === "mission.selected") return "pick";
   if (["mission.researching", "mission.building", "mission.testing", "mission.blocked"].includes(event)) return "make";
   if (event === "review.requested") return "team";
@@ -1230,6 +1405,7 @@ function stationForEvent(event: AgentBridgeEvent["event"]): Station {
 function moodForEvent(event: AgentBridgeEvent["event"]): MascotMood {
   if (event === "agent.idle") return "ready";
   if (event === "agent.connected" || event === "mission.scanning") return "scanning";
+  if (event === "mission.suggestions") return "focused";
   if (event === "mission.selected" || event === "approval.requested" || event === "proof.published") return "focused";
   if (["mission.researching", "mission.building", "mission.testing"].includes(event)) return "working";
   if (event === "mission.blocked") return "blocked";

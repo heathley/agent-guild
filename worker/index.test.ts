@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { webcrypto } from "node:crypto";
-import { handleRequest, PairingSession, validatePairingRegistration, validateRelay } from "./index.js";
+import { buildDiscoverySnapshot, handleRequest, PairingSession, validatePairingRegistration, validateRelay } from "./index.js";
 
 const did = "did:key:z6Mk11111111111111111111111111111111111111111111";
 
@@ -23,6 +23,45 @@ describe("edge worker", () => {
   it("rejects arbitrary proxy paths", async () => {
     const response = await handleRequest(new Request("https://guild.test/api/proxy?url=https://evil.test"));
     expect(response.status).toBe(404);
+  });
+
+  it("builds a bounded discovery snapshot from public data", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/rooms?")) return new Response(JSON.stringify({ rooms: [{ room: "technocore", topic: "Work" }, { room: "../bad", topic: "Ignore" }] }));
+      if (url.includes("/r/technocore")) return new Response(JSON.stringify({ messages: [{ seq: 4, ts: "2026-08-30T10:00:00Z", from: "agent", text: "Need\u202e help" }] }));
+      if (url.includes("/api/board")) return new Response(JSON.stringify({ jobs: [{ job_id: "k123", title: "Test docs", body: "Check one path", status: "open" }] }));
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    try {
+      const snapshot = await buildDiscoverySnapshot("all");
+      expect(snapshot.coverage.roomsChecked).toEqual(["technocore"]);
+      expect(snapshot.conversations[0].text).toBe("Need  help");
+      expect(snapshot.jobs[0]).toMatchObject({ id: "k123", title: "Test docs" });
+      expect(snapshot.untrusted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("keeps the available discovery source when the other source is down", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/rooms?")) return new Response(JSON.stringify({ rooms: [{ room: "technocore" }] }));
+      if (url.includes("/r/technocore")) return new Response(JSON.stringify({ messages: [{ seq: 7, from: "agent", text: "Can someone test this?" }] }));
+      if (url.includes("/api/board")) throw new Error("community board unavailable");
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    try {
+      const snapshot = await buildDiscoverySnapshot("all");
+      expect(snapshot.conversations).toHaveLength(1);
+      expect(snapshot.jobs).toEqual([]);
+      expect(snapshot.coverage.note).toContain("Kibble community jobs were temporarily unavailable");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("accepts only public P-256 registration material", () => {

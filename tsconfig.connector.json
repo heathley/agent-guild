@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["connector", "src/bridge/contract.ts"]
+  "include": ["connector", "src/bridge/contract.ts", "src/bridge/discovery.ts"]
 }

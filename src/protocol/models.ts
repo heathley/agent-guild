@@ -22,6 +22,18 @@ export type Receipt = {
   verifiedAt: string;
 };
 
+export type PublicActivityKind = "reply" | "question" | "help" | "progress" | "claim" | "result" | "review";
+export type PublicActivityRecord = {
+  id: string;
+  kind: PublicActivityKind;
+  room: string;
+  exactText: string;
+  replyToSeq?: number;
+  state: "draft" | "prepared" | "published" | "verified";
+  createdAt: string;
+  receipt?: Receipt;
+};
+
 export type Mission = {
   id: string;
   source: MissionSource;

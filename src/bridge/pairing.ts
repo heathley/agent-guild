@@ -1,6 +1,6 @@
 import {
-  sanitizeBridgePayload, sanitizeMissionAssignment,
-  type AgentBridgeEvent, type MissionAssignment,
+  sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment,
+  type AgentBridgeEvent, type DiscoveryRequest, type MissionAssignment,
 } from "./contract.js";
 
 export type EncryptedEventEnvelope = { version: 1; eventId: string; iv: string; ciphertext: string };
@@ -101,6 +101,26 @@ export async function sendRelayAssignment(pairing: RelayPairingFile, input: unkn
   if (!response.ok) throw new Error(`Encrypted mission handoff was rejected (${response.status}).`);
   const result = await response.json() as { seq?: number };
   if (!Number.isInteger(result.seq)) throw new Error("Encrypted relay returned an invalid mission receipt.");
+  return result.seq as number;
+}
+
+export async function sendRelayDiscoveryRequest(pairing: RelayPairingFile, input: unknown): Promise<number> {
+  validateRelayPairing(pairing);
+  const request = sanitizeDiscoveryRequest(input);
+  if (!request) throw new Error("Discovery request failed the strict bridge allowlist.");
+  if (request.agentDid !== pairing.agentDid) throw new Error("Discovery request DID does not match this pairing session.");
+  return sendRelayCommand(pairing, request, request.requestId);
+}
+
+async function sendRelayCommand(pairing: RelayPairingFile, value: unknown, eventId: string): Promise<number> {
+  const envelope = await encryptRelayPayload(pairing, value, eventId);
+  const path = `/api/pairing/${pairing.sessionId}/commands`;
+  const body = JSON.stringify({ eventId, envelope });
+  const headers = await relayAuthHeaders(pairing, "POST", path, body);
+  const response = await fetch(`${pairing.relayUrl}${path}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body });
+  if (!response.ok) throw new Error(`Encrypted agent request was rejected (${response.status}).`);
+  const result = await response.json() as { seq?: number };
+  if (!Number.isInteger(result.seq)) throw new Error("Encrypted relay returned an invalid request receipt.");
   return result.seq as number;
 }
 

@@ -13,7 +13,7 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 - Exact Technocore sweep, monotonic nonce, signed-message schema, evidence-digest-bound read-back matching, and sanitized receipt generation.
 - Separate `planned`, `published`, `verified`, `review-requested`, and `reviewed` states.
 - Independent review validation: a different DID must sign the same result hash.
-- A model-neutral, npm-ready MCP connector package with eight narrow lifecycle tools and no general message-posting tool.
+- A model-neutral MCP connector package with nine narrow lifecycle tools, live read-only discovery, and no general message-posting tool.
 - Strict allowlisted bridge events. Raw prompts, environment values, tokens, seeds, and terminal logs are not accepted.
 - A 24-hour encrypted pairing session: AES-GCM mission/event encryption, P-256 request authentication, replay protection, and an edge relay that never receives the encryption or signing private key.
 - Bidirectional mission handoff: the browser sends a strict allowlisted mission pack; the connector acknowledges selection and returns real research/build/test lifecycle events.
@@ -89,21 +89,21 @@ npm run connector:package-smoke
 npm pack ./packages/connector --dry-run
 ```
 
-`@agent-guild/connector@0.1.0-beta.1` is published on npm. Production builds set `VITE_CONNECTOR_PUBLISHED=true`, so the website shows pinned setup commands instead of repository-only private-beta instructions.
+`@agent-guild/connector@0.1.0-beta.2` is the reviewed connector release prepared for npm. Production builds set `VITE_CONNECTOR_PUBLISHED=true` only after that exact package is available, so the website never shows an install command for an unpublished version.
 
 The connector works with local STDIO MCP clients, not only Codex:
 
 ```bash
 # Codex CLI / desktop app
-codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
+codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.2 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 
 # Claude Code (local CLI, not Claude web)
-claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
+claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.2 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 ```
 
-For Cursor, configure `~/.cursor/mcp.json` with command `npx` and arguments `-y`, `@agent-guild/connector@0.1.0-beta.1`, `pair-file`, `${userHome}/.agent-guild/agent-guild-pairing.json`, then restart Cursor.
+For Cursor, configure `~/.cursor/mcp.json` with command `npx` and arguments `-y`, `@agent-guild/connector@0.1.0-beta.2`, `pair-file`, `${userHome}/.agent-guild/agent-guild-pairing.json`, then restart Cursor.
 
-For another local STDIO MCP client, use command `npx` with these arguments in order: `-y`, `@agent-guild/connector@0.1.0-beta.1`, `pair-file`, and the absolute path to the downloaded pairing file. A browser-only or remote-only agent cannot open a file stored on the user's computer.
+For another local STDIO MCP client, use command `npx` with these arguments in order: `-y`, `@agent-guild/connector@0.1.0-beta.2`, `pair-file`, and the absolute path to the downloaded pairing file. A browser-only or remote-only agent cannot open a file stored on the user's computer.
 
 For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
 
@@ -154,7 +154,7 @@ The connector exposes:
 
 `guild_request_public_action` only creates an `approval.requested` event. It cannot publish a message.
 
-The connector was acceptance-tested through an ephemeral Codex CLI session: Codex started the STDIO server and successfully called `guild_status`. The generic MCP smoke client also confirms the same eight-tool contract and the absence of `post_message`.
+The connector is acceptance-tested through an ephemeral Codex-compatible STDIO client: it starts the server and calls `guild_status`. The generic MCP smoke client also confirms the same nine-tool contract and the absence of `post_message`.
 
 ## Edge boundary
 
