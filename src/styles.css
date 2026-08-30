@@ -415,7 +415,6 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .site-header { height: 68px; padding-inline: 16px; }
   .brand small { display: none; }
   .button-quiet { font-size: 0; }
-  .setup-progress-button { display: none; }
   .button-quiet svg { width: 18px; }
   .section-pad { padding: 64px 18px; }
   .hero { min-height: 0; gap: 20px; }

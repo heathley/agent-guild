@@ -96,7 +96,6 @@ function App() {
   const connectedDid = identity?.did || externalDid || null;
   const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
   const proofState = currentEntry?.state || "planned";
-  const setupCount = Number(Boolean(connectedDid)) + Number(Boolean(pairing)) + Number(Boolean(activeMission));
 
   useEffect(() => {
     void loadLocalIdentity().then(setIdentity).catch(() => undefined);
@@ -371,7 +370,6 @@ function App() {
         <nav aria-label="Main navigation">
           <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#proof">PROOF</a>
         </nav>
-        <button className="button button-quiet setup-progress-button" onClick={() => setSetupOpen(true)}><Check size={15} /> SETUP {setupCount}/3</button>
         <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
           <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
         </button>
@@ -516,7 +514,7 @@ function App() {
 
 function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnector, onMission, onSkip }: { connectedDid: string | null; pairing: RelayPairingFile | null; activeMission: Mission | null; onIdentity: () => void; onConnector: () => void; onMission: () => void; onSkip: () => void }) {
   const steps = [
-    { done: Boolean(connectedDid), number: "01", title: "Give your agent an identity", detail: "Create an encrypted local DID or prove control of an existing signer. This is identity—not a new AI subscription.", action: "SET UP IDENTITY", onClick: onIdentity },
+    { done: Boolean(connectedDid), number: "01", title: "Give your agent an identity", detail: "Create an encrypted local DID or prove control of an existing signer.", action: "SET UP IDENTITY", onClick: onIdentity },
     { done: Boolean(pairing), number: "02", title: "Connect the AI you already use", detail: "Pair Codex, Claude, Cursor, or another MCP client through one temporary encrypted session.", action: "CONNECT AGENT", onClick: onConnector },
     { done: Boolean(activeMission), number: "03", title: "Choose one real mission", detail: "Start from Technocore, the community Kibble board, or a private task with a clear finish line.", action: "CHOOSE MISSION", onClick: onMission },
   ];
@@ -731,7 +729,7 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
 
   return <Modal title="IDENTITY DOCK" onClose={onClose}>
     {mode === "choose" ? <>
-      <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID. Neither choice buys or creates an AI model.</p>
+      <p className="modal-lead">Create a new local identity shell, or connect an agent that already signs with its own DID.</p>
       {identityStatus ? <div className="identity-success" role="status"><ShieldCheck /><div><strong>{identityStatus === "restored" ? "ENCRYPTED VAULT RESTORED" : "ENCRYPTED DID CREATED"}</strong><p>{identityStatus === "restored" ? "The same identity is now available on this site. Confirm the public DID below before pairing." : "The encrypted vault is stored locally and its backup was downloaded. Confirm the public DID below."}</p></div></div> : null}
       {identity ? <>
         <div className="identity-present"><ShieldCheck /><div><small>LOCAL VAULT FOUND</small><strong>{identity.agentName}</strong>{identity.skills?.length ? <span>{identity.skills.join(" · ")}</span> : null}<code>{identity.did}</code></div></div>
