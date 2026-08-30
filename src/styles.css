@@ -64,7 +64,6 @@ h1 em { color: var(--cyan); font-style: normal; }
 .setup-guide-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; margin-bottom: 24px; }
 .setup-guide-head h2 { font-size: clamp(24px, 3vw, 38px); margin-bottom: 8px; }
 .setup-guide-head p:not(.kicker) { color: var(--secondary); margin: 0; }
-.setup-guide-head .back-link { min-width: max-content; margin: 3px 0 0; }
 .setup-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
 .setup-steps article { min-height: 245px; padding: 22px; border-right: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr auto; gap: 18px; }
 .setup-steps article:last-child { border-right: 0; }

@@ -81,7 +81,6 @@ function App() {
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
   const [handoffStatus, setHandoffStatus] = useState("");
   const [proofOpen, setProofOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(() => localStorage.getItem("agent-guild:setup-dismissed") !== "true");
   const [editingMission, setEditingMission] = useState(false);
   const [manualEvidenceKind, setManualEvidenceKind] = useState<"commit" | "test" | "receipt" | "review">("commit");
   const [manualEvidenceReference, setManualEvidenceReference] = useState("");
@@ -393,15 +392,14 @@ function App() {
           </div>
         </section>
 
-        {setupOpen ? <SetupGuide
+        <SetupGuide
           connectedDid={connectedDid}
           pairing={pairing}
           activeMission={activeMission}
           onIdentity={() => setIdentityOpen(true)}
           onConnector={() => setPairOpen(true)}
           onMission={() => { setSourceTab("local"); document.querySelector("#missions")?.scrollIntoView({ behavior: "smooth" }); }}
-          onSkip={() => { localStorage.setItem("agent-guild:setup-dismissed", "true"); setSetupOpen(false); }}
-        /> : null}
+        />
 
         <section id="world" className="world section-pad">
           <div className="section-heading">
@@ -512,14 +510,14 @@ function App() {
   );
 }
 
-function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnector, onMission, onSkip }: { connectedDid: string | null; pairing: RelayPairingFile | null; activeMission: Mission | null; onIdentity: () => void; onConnector: () => void; onMission: () => void; onSkip: () => void }) {
+function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnector, onMission }: { connectedDid: string | null; pairing: RelayPairingFile | null; activeMission: Mission | null; onIdentity: () => void; onConnector: () => void; onMission: () => void }) {
   const steps = [
     { done: Boolean(connectedDid), number: "01", title: "Give your agent an identity", detail: "Create an encrypted local DID or prove control of an existing signer.", action: "SET UP IDENTITY", onClick: onIdentity },
     { done: Boolean(pairing), number: "02", title: "Connect the AI you already use", detail: "Pair Codex, Claude, Cursor, or another MCP client through one temporary encrypted session.", action: "CONNECT AGENT", onClick: onConnector },
     { done: Boolean(activeMission), number: "03", title: "Choose one real mission", detail: "Start from Technocore, the community Kibble board, or a private task with a clear finish line.", action: "CHOOSE MISSION", onClick: onMission },
   ];
   return <section className="setup-guide section-pad" aria-label="Agent Guild setup">
-    <div className="setup-guide-head"><div><p className="kicker">START HERE · ABOUT 3 MINUTES</p><h2>Make this workspace yours.</h2><p>Nothing public happens during setup. You can leave and continue later from this browser.</p></div><button className="back-link" onClick={onSkip}>HIDE FOR NOW</button></div>
+    <div className="setup-guide-head"><div><p className="kicker">START HERE · ABOUT 3 MINUTES</p><h2>Make this workspace yours.</h2><p>Nothing public happens during setup. You can leave and continue later from this browser.</p></div></div>
     <div className="setup-steps">{steps.map((step) => <article key={step.number} className={step.done ? "is-done" : ""}><span>{step.done ? <Check size={17} /> : step.number}</span><div><h3>{step.title}</h3><p>{step.detail}</p></div><button className={`button ${step.done ? "button-quiet" : "button-secondary"}`} onClick={step.onClick}>{step.done ? "REVIEW" : step.action}</button></article>)}</div>
   </section>;
 }
