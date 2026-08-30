@@ -47,6 +47,8 @@ export type Mission = {
   observedAt: string;
   sourceSeq?: number;
   resultHash?: string;
+  claimable?: boolean;
+  sourceState?: "verified-open" | "room-unverified";
 };
 
 export type AttachedEvidence = {
@@ -83,6 +85,14 @@ export type LedgerEntry = {
     resultHash: string;
     signature: string;
     verifiedAt: string;
+  };
+  kibble?: {
+    jobId: string;
+    claimReceipt?: Receipt;
+    boardClaimVerifiedAt?: string;
+    resultReceipt?: Receipt;
+    boardResultHash?: string;
+    boardResultVerifiedAt?: string;
   };
   createdAt: string;
   updatedAt: string;

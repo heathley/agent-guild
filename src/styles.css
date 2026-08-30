@@ -151,11 +151,15 @@ h1 em { color: var(--cyan); font-style: normal; }
 .source-feed-stale { border-left: 3px solid var(--cyan); flex-wrap: wrap; }
 .source-feed-error { border-left: 3px solid var(--red); }
 .source-feed-loading svg { animation: status-spin 1s linear infinite; }
-.kibble-snapshot { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 16px; padding: 1px; background: var(--line); }
+.kibble-snapshot { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; margin-bottom: 16px; padding: 1px; background: var(--line); }
 .kibble-snapshot span { min-height: 72px; padding: 13px; background: var(--surface); display: grid; align-content: center; gap: 5px; }
 .kibble-snapshot strong { color: var(--ice); font: 700 20px "Space Mono", monospace; }
 .kibble-snapshot span:first-child strong { color: var(--cyan); }
 .kibble-snapshot small { color: var(--secondary); font: 700 8px "Space Mono", monospace; }
+.source-warning { margin: 0 0 16px; padding: 14px; border: 1px solid var(--cyan); background: rgba(0, 180, 216, .06); display: flex; align-items: flex-start; gap: 11px; }
+.source-warning svg { flex: 0 0 auto; color: var(--cyan); }
+.source-warning span { display: grid; gap: 4px; }
+.source-warning small { color: var(--secondary); }
 .source-toolbar { display: grid; grid-template-columns: auto minmax(220px, 460px) 1fr; align-items: center; gap: 12px; margin-bottom: 20px; }
 .source-toolbar label { display: inline-flex; align-items: center; gap: 7px; color: var(--ice); font: 700 9px "Space Mono", monospace; letter-spacing: .04em; }
 .source-toolbar label svg { color: var(--cyan); }
@@ -462,6 +466,9 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .signed-ready small, .write-lock small { color: var(--secondary); }
 .write-lock { border-color: var(--line); background: var(--surface); }
 .write-lock svg { color: var(--cyan); }
+.readback-retry { border: 1px solid rgba(0, 180, 216, .55); background: rgba(0, 180, 216, .06); padding: 16px; }
+.readback-retry strong { color: var(--text); }
+.readback-retry p { margin: 6px 0 14px; color: var(--muted); }
 .check-row { display: flex; align-items: flex-start; gap: 10px; font-weight: 400; line-height: 1.5; }
 .check-row input { width: 16px; height: 16px; flex: none; }
 .external-signing, .review-request { display: grid; gap: 12px; border: 1px solid var(--line); background: var(--surface); padding: 15px; }

@@ -5,6 +5,8 @@ const DID = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 const NONCE = /^[0-9]{1,19}$/;
 const SIG = /^[A-Za-z0-9_-]{86}$/;
 const PAIRING_SESSION = /^[A-Za-z0-9_-]{32}$/;
+const NONCE_DIGEST = /^[0-9a-f]{64}$/;
+const FIXED_WORK_ROOMS = ["kibble", "technocore", "dev"];
 
 export default {
   fetch(request, env, ctx) {
@@ -47,7 +49,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     if (request.method === "GET" && url.pathname === "/api/kibble/board") {
-      return await readJson(`${KIBBLE}/api/board?status=open&limit=60`, request, env, ctx, 300, 40_000);
+      return await readKibbleBoard(request, env);
     }
 
     if (request.method === "GET" && url.pathname === "/api/kibble/status") {
@@ -87,6 +89,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       }
       const body = await readSmallJson(request, 12_000);
       const message = validateRelay(body);
+      const guard = await reservePublicWrite(env, message);
+      if (!guard.allowed) return json({ error: guard.error, ...(guard.retryAfter ? { retryAfter: guard.retryAfter } : {}) }, guard.status, request, env);
       const upstream = await fetch(`${TECHNOCORE}/r/${message.room}`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -115,7 +119,11 @@ export async function buildDiscoverySnapshot(source = "all", ctx = {}) {
   if (includeTechnocore) {
     try {
       const roomPayload = await fetchJson(`${TECHNOCORE}/rooms?format=json&limit=20`, 15_000);
-      const rooms = Array.isArray(roomPayload?.rooms) ? roomPayload.rooms.flatMap(normalizeRoom).slice(0, 6) : [];
+      const popular = Array.isArray(roomPayload?.rooms) ? roomPayload.rooms.flatMap(normalizeRoom) : [];
+      const byName = new Map(popular.map((room) => [room.room, room]));
+      const rooms = [...FIXED_WORK_ROOMS.map((room) => byName.get(room) || { room, topic: "" }), ...popular]
+        .filter((room, index, list) => list.findIndex((item) => item.room === room.room) === index)
+        .slice(0, 8);
       const windows = await Promise.all(rooms.map(async (room) => {
         try {
           return { room, payload: await fetchJson(`${TECHNOCORE}/r/${room.room}?format=json&limit=12`, 12_000) };
@@ -146,7 +154,13 @@ export async function buildDiscoverySnapshot(source = "all", ctx = {}) {
         if (job) jobs.push(job);
       }
     } catch {
-      coverageNotes.push("Kibble community jobs were temporarily unavailable.");
+      coverageNotes.push("Kibble board verification was temporarily unavailable. Room-derived JOB signals cannot be claimed until the board recovers.");
+      try {
+        const tape = await fetchJson(`${TECHNOCORE}/r/kibble?format=json&limit=200`, 12_000);
+        jobs.push(...extractKibbleRoomJobs(tape).slice(0, 12));
+      } catch {
+        coverageNotes.push("The #kibble room fallback was also unavailable.");
+      }
     }
   }
 
@@ -266,7 +280,62 @@ function normalizeJob(input, index) {
     ...(DID.test(authorDid) ? { authorDid } : {}),
     risk: /token|seed|private key|password|download|execute|curl|wallet/i.test(summary) ? "high" : "medium",
     observedAt,
+    claimable: true,
+    boardState: "verified-open",
   };
+}
+
+function extractKibbleRoomJobs(input) {
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  const jobs = new Map();
+  const closed = new Set();
+  for (const message of messages) {
+    const text = cleanPublic(message?.text, 2_000);
+    const action = text.match(/^(CLAIM|RESULT|DELIVER|ATTEST) v1 \| (k[0-9a-f]{10}) \|/i);
+    if (action) closed.add(action[2].toLowerCase());
+    const match = text.match(/^JOB v1 \| (k[0-9a-f]{10}) \| ([a-z-]+) \| ([^|]{1,160}) \| (.+)$/i);
+    if (!match) continue;
+    const id = match[1].toLowerCase();
+    jobs.set(id, {
+      kind: "job", id, title: cleanPublic(match[3], 160), summary: cleanPublic(match[4], 1_500),
+      authorDid: DID.test(message?.from || "") ? message.from : undefined,
+      risk: /token|seed|private key|password|download|execute|curl|wallet/i.test(match[4]) ? "high" : "medium",
+      observedAt: typeof message?.ts === "string" && Number.isFinite(Date.parse(message.ts)) ? new Date(message.ts).toISOString() : null,
+      claimable: false,
+      boardState: "room-unverified",
+    });
+  }
+  return [...jobs.values()].filter((job) => !closed.has(job.id));
+}
+
+async function readKibbleBoard(request, env) {
+  try {
+    const board = await fetchJson(`${KIBBLE}/api/board?status=open&limit=60`, 40_000);
+    if (Array.isArray(board)) return json({ jobs: board, degraded: false, checked_at: new Date().toISOString() }, 200, request, env);
+    return json({ ...board, degraded: false, checked_at: new Date().toISOString() }, 200, request, env);
+  } catch {
+    try {
+      const tape = await fetchJson(`${TECHNOCORE}/r/kibble?format=json&limit=200`, 12_000);
+      return json({
+        jobs: [], fallback_jobs: extractKibbleRoomJobs(tape), degraded: true,
+        checked_at: new Date().toISOString(),
+        error: "Kibble board verification is unavailable. Room-derived signals cannot be claimed yet.",
+      }, 200, request, env);
+    } catch {
+      return json({ error: "Kibble board and room fallback are temporarily unavailable." }, 503, request, env);
+    }
+  }
+}
+
+async function reservePublicWrite(env, message) {
+  if (!env.WRITE_GUARD) return { allowed: false, status: 503, error: "Public write guard is not configured." };
+  const id = env.WRITE_GUARD.idFromName(`${message.from}|${message.room}`);
+  const response = await env.WRITE_GUARD.get(id).fetch(new Request("https://write-guard.internal/reserve", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nonce: message.nonce, digest: await sha256(`${message.room}|${message.nonce}|${message.text}`) }),
+  }));
+  const body = await response.json();
+  return response.ok ? { allowed: true } : { allowed: false, status: response.status, error: body.error || "Public write was blocked.", retryAfter: body.retryAfter };
 }
 
 function cleanPublic(value, max) {
@@ -398,6 +467,42 @@ export class PairingSession {
       return pairingJson({ error: "Not found." }, 404);
     } catch (error) {
       return pairingJson({ error: error instanceof Error ? error.message : "Pairing request failed." }, 400);
+    }
+  }
+
+  async alarm() {
+    await this.state.storage.deleteAll();
+  }
+}
+
+export class WriteGuard {
+  constructor(state) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    try {
+      if (request.method !== "POST" || new URL(request.url).pathname !== "/reserve") return pairingJson({ error: "Not found." }, 404);
+      const input = await readSmallJson(request, 1_000);
+      if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "digest,nonce" ||
+          !NONCE.test(input.nonce) || typeof input.digest !== "string" || !NONCE_DIGEST.test(input.digest)) {
+        return pairingJson({ error: "Invalid write reservation." }, 400);
+      }
+      const now = Date.now();
+      const recent = ((await this.state.storage.get("recentWrites")) || []).filter((item) => item.at > now - 3_600_000);
+      if (recent.some((item) => item.nonce === input.nonce || item.digest === input.digest)) {
+        return pairingJson({ error: "This signed message was already reserved. Read the room back; do not resend it." }, 409);
+      }
+      const minute = recent.filter((item) => item.at > now - 60_000);
+      if (minute.length >= 3 || recent.length >= 20) {
+        const windowStart = minute.length >= 3 ? minute[0].at + 60_000 : recent[0].at + 3_600_000;
+        return pairingJson({ error: "Public write rate limit reached.", retryAfter: Math.max(1, Math.ceil((windowStart - now) / 1_000)) }, 429);
+      }
+      await this.state.storage.put("recentWrites", [...recent, { nonce: input.nonce, digest: input.digest, at: now }].slice(-20));
+      await this.state.storage.setAlarm(now + 86_400_000);
+      return pairingJson({ reserved: true }, 201);
+    } catch (error) {
+      return pairingJson({ error: error instanceof Error ? error.message : "Write reservation failed." }, 400);
     }
   }
 

@@ -1,4 +1,5 @@
 import { normalizeKibbleBoardSnapshot, type KibbleBoardSnapshot } from "../protocol/kibble";
+import { findKibbleJob, type KibbleJobState } from "../protocol/kibble-actions";
 import type { Mission } from "../protocol/models";
 import { edgeUrl } from "./edge";
 
@@ -56,6 +57,11 @@ export async function fetchKibbleJobs(signal?: AbortSignal): Promise<KibbleBoard
   const payload = await requestJson("/api/kibble/board", signal, 45_000);
   const snapshot = normalizeKibbleBoardSnapshot(payload);
   return { ...snapshot, missions: snapshot.missions.slice(0, 60) };
+}
+
+export async function fetchKibbleJobState(jobId: string, signal?: AbortSignal): Promise<KibbleJobState | null> {
+  const payload = await requestJson("/api/kibble/board", signal, 55_000);
+  return findKibbleJob(payload, jobId);
 }
 
 export async function fetchTechnocoreRoom(room: string, signal?: AbortSignal): Promise<RoomWindow> {

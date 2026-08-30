@@ -6,6 +6,7 @@ dist
 *.tsbuildinfo
 .env
 .env.*
+!.env.staging.example
 !.env.example
 .dev.vars
 .dev.vars.*

@@ -19,6 +19,9 @@ export type KibbleBoardSnapshot = {
   attested: number;
   rejected: number;
   other: number;
+  provisional: number;
+  degraded: boolean;
+  error: string;
 };
 
 const TEXT_LIMIT = 2_000;
@@ -37,6 +40,7 @@ export function normalizeKibbleBoard(input: unknown): Mission[] {
     return [{
       id: `kibble:${id}`,
       source: "kibble-community",
+      room: "kibble",
       title,
       summary: body,
       authorDid: safeText(item.poster_did, 180) || undefined,
@@ -45,12 +49,15 @@ export function normalizeKibbleBoard(input: unknown): Mission[] {
       risk: /token|seed|private key|password|download|execute|curl|wallet/i.test(body) ? "high" : "medium",
       observedAt: safeDate(item.created_at),
       resultHash: safeText(item.result_hash, 160) || undefined,
+      claimable: true,
+      sourceState: "verified-open",
     } satisfies Mission];
   });
 }
 
 export function normalizeKibbleBoardSnapshot(input: unknown): KibbleBoardSnapshot {
   const rows = extractRows(input).filter((row): row is KibbleBoardItem => Boolean(row && typeof row === "object"));
+  const fallbackRows = extractFallbackRows(input);
   const counts = { open: 0, claimed: 0, attested: 0, rejected: 0, other: 0 };
   for (const row of rows) {
     const status = safeText(row.status, 32).toLowerCase();
@@ -61,10 +68,33 @@ export function normalizeKibbleBoardSnapshot(input: unknown): KibbleBoardSnapsho
     else counts.other += 1;
   }
   return {
-    missions: normalizeKibbleBoard(input),
-    total: rows.length,
+    missions: [...normalizeKibbleBoard(input), ...normalizeFallbackMissions(fallbackRows)],
+    total: rows.length + fallbackRows.length,
     ...counts,
+    provisional: fallbackRows.length,
+    degraded: Boolean(input && typeof input === "object" && (input as Record<string, unknown>).degraded === true),
+    error: input && typeof input === "object" ? safeText((input as Record<string, unknown>).error, 300) : "",
   };
+}
+
+function normalizeFallbackMissions(rows: unknown[]): Mission[] {
+  return rows.flatMap((row, index) => {
+    if (!row || typeof row !== "object") return [];
+    const item = row as Record<string, unknown>;
+    const id = safeText(item.id ?? item.job_id, 96) || `room-signal-${index}`;
+    const title = safeText(item.title, 160);
+    const body = safeText(item.summary ?? item.body, TEXT_LIMIT);
+    if (!/^k[0-9a-f]{10}$/.test(id) || !title || !body) return [];
+    return [{
+      id: `kibble:${id}`, source: "kibble-community", title, summary: body,
+      room: "kibble",
+      authorDid: safeText(item.authorDid ?? item.poster_did, 180) || undefined,
+      successCriteria: ["Wait for Kibble board verification before claiming", "Publish an artifact and result hash"],
+      verification: "Room-derived signal only. The Kibble board must confirm the job is open before CLAIM.",
+      risk: item.risk === "high" ? "high" : "medium", observedAt: safeDate(item.observedAt ?? item.created_at),
+      claimable: false, sourceState: "room-unverified",
+    } satisfies Mission];
+  });
 }
 
 function extractRows(input: unknown): unknown[] {
@@ -75,6 +105,12 @@ function extractRows(input: unknown): unknown[] {
     if (Array.isArray(value[key])) return value[key] as unknown[];
   }
   return [];
+}
+
+function extractFallbackRows(input: unknown): unknown[] {
+  if (!input || typeof input !== "object") return [];
+  const value = input as Record<string, unknown>;
+  return Array.isArray(value.fallback_jobs) ? value.fallback_jobs : [];
 }
 
 function safeText(value: unknown, limit: number): string {

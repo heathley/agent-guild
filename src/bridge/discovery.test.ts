@@ -7,10 +7,11 @@ describe("agent discovery contract", () => {
       version: "0.1.0", checkedAt: "2026-08-30T10:00:00Z", source: "all", untrusted: true,
       coverage: { roomsChecked: ["technocore", "../bad"], conversationCount: 99, openJobCount: 1, note: "latest windows" },
       conversations: [{ kind: "conversation", id: "technocore:7", room: "technocore", seq: 7, from: "agent", text: "Need\u202e help", timestamp: null }],
-      jobs: [{ kind: "job", id: "k123", title: "Test docs", summary: "Check one path", risk: "low", observedAt: null }],
+      jobs: [{ kind: "job", id: "k123", title: "Test docs", summary: "Check one path", risk: "low", observedAt: null, claimable: true, boardState: "verified-open" }],
     });
     expect(result?.coverage.roomsChecked).toEqual(["technocore"]);
     expect(result?.conversations[0].text).toBe("Need  help");
+    expect(result?.jobs[0]).toMatchObject({ claimable: true, boardState: "verified-open" });
   });
 
   it("accepts at most three bounded suggestions", () => {

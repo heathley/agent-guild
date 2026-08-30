@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { webcrypto } from "node:crypto";
-import { buildDiscoverySnapshot, handleRequest, PairingSession, validatePairingRegistration, validateRelay } from "./index.js";
+import { buildDiscoverySnapshot, handleRequest, PairingSession, validatePairingRegistration, validateRelay, WriteGuard } from "./index.js";
 
 const did = "did:key:z6Mk11111111111111111111111111111111111111111111";
 
@@ -58,7 +58,27 @@ describe("edge worker", () => {
       const snapshot = await buildDiscoverySnapshot("all");
       expect(snapshot.conversations).toHaveLength(1);
       expect(snapshot.jobs).toEqual([]);
-      expect(snapshot.coverage.note).toContain("Kibble community jobs were temporarily unavailable");
+      expect(snapshot.coverage.note).toContain("Kibble board verification was temporarily unavailable");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("keeps room-derived Kibble JOB signals locked when the board is down", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/rooms?")) return new Response(JSON.stringify({ rooms: [{ room: "technocore" }, { room: "kibble" }] }));
+      if (url.includes("/r/kibble")) return new Response(JSON.stringify({ messages: [{ seq: 8, ts: "2026-08-30T10:00:00Z", from: did, text: "JOB v1 | k0123456789 | build | Check reconnect | Reproduce one failure" }] }));
+      if (url.includes("/r/technocore")) return new Response(JSON.stringify({ messages: [] }));
+      if (url.includes("/r/dev")) return new Response(JSON.stringify({ messages: [] }));
+      if (url.includes("/api/board")) throw new Error("board timeout");
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    try {
+      const snapshot = await buildDiscoverySnapshot("all");
+      expect(snapshot.jobs[0]).toMatchObject({ id: "k0123456789", claimable: false, boardState: "room-unverified" });
+      expect(snapshot.coverage.note).toContain("cannot be claimed");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -111,6 +131,18 @@ describe("edge worker", () => {
     const inboxHeaders = await authHeaders(keys.privateKey, "GET", inboxPath, "", "i".repeat(24));
     const inboxResponse = await session.fetch(new Request(`https://guild.test${inboxPath}`, { headers: inboxHeaders }));
     expect((await inboxResponse.json()).events).toHaveLength(1);
+  });
+
+  it("blocks duplicate signed writes and rate limits a DID plus room", async () => {
+    const guard = new WriteGuard({ storage: new MemoryStorage() });
+    const reserve = (nonce: string, digest: string) => guard.fetch(new Request("https://write-guard.internal/reserve", {
+      method: "POST", body: JSON.stringify({ nonce, digest }),
+    }));
+    expect((await reserve("1", "a".repeat(64))).status).toBe(201);
+    expect((await reserve("1", "b".repeat(64))).status).toBe(409);
+    expect((await reserve("2", "b".repeat(64))).status).toBe(201);
+    expect((await reserve("3", "c".repeat(64))).status).toBe(201);
+    expect((await reserve("4", "d".repeat(64))).status).toBe(429);
   });
 });
 

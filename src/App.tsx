@@ -13,10 +13,11 @@ import {
 import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
 import type { AutonomyMode, DiscoverySource, WorkSuggestion } from "./bridge/discovery";
 import {
-  fetchKibbleJobs, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
+  fetchKibbleJobs, fetchKibbleJobState, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
   type PublicRoom, type RoomWindow,
 } from "./data/api";
 import type { KibbleBoardSnapshot } from "./protocol/kibble";
+import { claimIsBoardVerified, createKibbleClaim, createKibbleResult, kibbleJobId, resultIsBoardVerified } from "./protocol/kibble-actions";
 import { edgeOrigin, edgeUrl } from "./data/edge";
 import { deleteLocalIdentity, deleteLocalWorkspaceDatabase, loadLocalIdentity, saveLocalIdentity } from "./identity/storage";
 import {
@@ -42,7 +43,7 @@ type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
 type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
 
 const EMPTY_KIBBLE_BOARD: KibbleBoardSnapshot = {
-  missions: [], total: 0, open: 0, claimed: 0, attested: 0, rejected: 0, other: 0,
+  missions: [], total: 0, open: 0, claimed: 0, attested: 0, rejected: 0, other: 0, provisional: 0, degraded: false, error: "",
 };
 
 const STATIONS: { id: Station; label: string; eyebrow: string; description: string }[] = [
@@ -551,6 +552,7 @@ function App() {
             {kibbleFeed.status === "loading" && !kibbleFeed.data.total ? <EmptyState icon={<RefreshCw />} title="Reading Kibble when requested…" detail="Kibble loads separately so it cannot delay Technocore." /> : null}
             {kibbleFeed.status === "error" && !kibbleFeed.data.total ? <EmptyState icon={<CircleAlert />} title="Kibble is unavailable" detail={kibbleFeed.error} action="TRY AGAIN" onAction={() => void refreshKibble()} /> : null}
             {["ready", "stale"].includes(kibbleFeed.status) ? <>
+              {kibbleFeed.data.degraded ? <div className="source-warning" role="status"><CircleAlert /><span><strong>Kibble board verification is unavailable.</strong><small>{kibbleFeed.data.error || "Room signals may still appear, but CLAIM stays locked until the board recovers."}</small></span></div> : null}
               <KibbleSnapshotSummary snapshot={kibbleFeed.data} />
               <MissionGrid missions={kibbleFeed.data.missions} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} snapshot={kibbleFeed.data} />
             </> : null}
@@ -676,6 +678,7 @@ function KibbleSnapshotSummary({ snapshot }: { snapshot: KibbleBoardSnapshot }) 
     <span><strong>{snapshot.claimed}</strong><small>ALREADY CLAIMED</small></span>
     <span><strong>{snapshot.attested}</strong><small>FINISHED + ATTESTED</small></span>
     <span><strong>{snapshot.rejected}</strong><small>REJECTED</small></span>
+    {snapshot.provisional ? <span><strong>{snapshot.provisional}</strong><small>ROOM SIGNALS · LOCKED</small></span> : null}
   </div>;
 }
 
@@ -685,10 +688,12 @@ function RoomGrid({ rooms, total, onInspect, onMore }: { rooms: PublicRoom[]; to
 }
 
 function MissionGrid({ missions, connectedDid, onInspect, snapshot }: { missions: Mission[]; connectedDid: string | null; onInspect: (mission: Mission) => void; snapshot?: KibbleBoardSnapshot }) {
+  if (!missions.length && snapshot?.degraded) return <EmptyState icon={<CircleAlert />} title="Kibble board is unavailable — this is not an empty board" detail={snapshot.error || "Agent Guild cannot confirm which community jobs are open, so CLAIM remains locked."} />;
   if (!missions.length) return <EmptyState icon={<Sparkles />} title="Live board checked — no claimable jobs right now" detail={snapshot?.total ? `The snapshot loaded ${snapshot.total} jobs, but none are open: ${snapshot.claimed} claimed, ${snapshot.attested} attested, and ${snapshot.rejected} rejected. Try again later or bring your own task.` : "Kibble is a community job board. Agent Guild will not invent jobs when the live board is empty."} action="BRING MY OWN TASK" onAction={() => { document.querySelector<HTMLButtonElement>('.source-tabs button[aria-label="Bring your own task"]')?.click(); }} />;
   return <div className="card-grid">{missions.map((mission) => {
     const ownJob = Boolean(connectedDid && mission.authorDid === connectedDid);
-    return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>COMMUNITY JOB · UNTRUSTED</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob} onClick={() => onInspect(mission)}>{ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob ? <ArrowRight size={14} /> : null}</button></footer></article>;
+    const boardLocked = mission.claimable === false;
+    return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>{boardLocked ? "ROOM SIGNAL · BOARD UNVERIFIED" : "COMMUNITY JOB · UNTRUSTED"}</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{boardLocked ? "NOT CLAIMABLE YET" : ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob || boardLocked} onClick={() => onInspect(mission)}>{boardLocked ? "WAIT FOR BOARD" : ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob && !boardLocked ? <ArrowRight size={14} /> : null}</button></footer></article>;
   })}</div>;
 }
 
@@ -1092,6 +1097,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   const [passphrase, setPassphrase] = useState("");
   const [externalSignature, setExternalSignature] = useState("");
   const [finalConfirm, setFinalConfirm] = useState(false);
+  const [publishAttempted, setPublishAttempted] = useState(false);
   const [error, setError] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
   const roomChoices = useMemo(() => [...new Set([...rooms.map((item) => item.room), ...(initial?.room ? [initial.room] : [])])].sort(), [rooms, initial?.room]);
@@ -1101,7 +1107,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   }
 
   function preview() {
-    setError(""); setFinalConfirm(false);
+    setError(""); setFinalConfirm(false); setPublishAttempted(false);
     if (!did) return setError("Create or connect a DID before preparing public activity.");
     if (!room) return setError("Choose the Technocore room where this message belongs.");
     const reference = replyToSeq.trim() ? Number(replyToSeq) : undefined;
@@ -1130,25 +1136,35 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
 
   async function publish() {
     if (!writesEnabled || !dry?.signature || !did || !finalConfirm) return;
-    setError("");
+    setError(""); setPublishAttempted(true);
     const prepared = records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "prepared" as const, createdAt: new Date().toISOString() };
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
       if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       upsert({ ...prepared, state: "published" });
+      await verifyReadback(prepared);
+    } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Public activity failed."} Do not resend this signature; use CHECK READ-BACK AGAIN.`); }
+  }
+
+  async function verifyReadback(prepared?: PublicActivityRecord) {
+    if (!dry?.signature || !did) return;
+    setError("");
+    const record = prepared || records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "published" as const, createdAt: new Date().toISOString() };
+    try {
       const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
       if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
       const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
       const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
-      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
       const receipt = await createReceipt(room, found, dry.signature);
-      upsert({ ...prepared, state: "verified", receipt });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Public activity failed."); }
+      upsert({ ...record, state: "verified", receipt });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Read-back verification failed."); }
   }
 
   return <Modal title="ACTIVITY DESK" onClose={onClose} wide>
     <div className="activity-explainer"><MessageSquareText /><div><strong>Technocore participation stays separate from contribution proof.</strong><p>Replies, questions, help requests and progress notes count as visible activity. They do not become verified contributions unless a separate artifact and proof trail exists.</p></div></div>
+    <div className="mcp-explainer" role="note"><ShieldCheck /><div><strong>Strict beta: one exact approval per public message.</strong><p>Agent Guild does not use standing permission for CLAIM, RESULT, ATTEST, reviews, links, or ordinary room activity. Autonomous scanning and local work remain available without publication.</p></div></div>
     {initial?.exactText ? <div className="agent-draft-banner"><Bot /><span><strong>DRAFTED BY YOUR AGENT</strong><small>Review every word. The connector did not publish it.</small></span></div> : null}
     <div className="activity-compose">
       <label>What kind of activity is this?<select value={kind} onChange={(event) => { setKind(event.target.value as PublicActivityRecord["kind"]); setDry(null); }}><option value="reply">Reply</option><option value="question">Question</option><option value="help">Ask for help</option><option value="progress">Progress update</option><option value="claim">Claim or offer to help</option><option value="result">Share a result</option><option value="review">Review</option></select></label>
@@ -1159,11 +1175,87 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
       {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
       {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p>Sign the exact payload with your existing signer, then paste only its base64url signature. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact activity payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
       {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
-      {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT ACTIVITY</button></> : null}
+      {dry?.signature && writesEnabled && !publishAttempted ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT ACTIVITY</button></> : null}
+      {dry?.signature && writesEnabled && publishAttempted ? <div className="readback-retry"><strong>This signature will not be sent again.</strong><p>Only re-check Technocore for the same DID, nonce and exact text.</p><button className="button button-secondary" onClick={() => void verifyReadback()}>CHECK READ-BACK AGAIN</button></div> : null}
       {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this production build.</strong><small>The complete activity draft is saved locally. Enable writes only on reviewed staging and obtain fresh approval for this exact message.</small></span></div> : null}
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
     </div>
   </Modal>;
+}
+
+function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission: Mission; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
+  const jobId = kibbleJobId(mission.id);
+  const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
+  const [passphrase, setPassphrase] = useState("");
+  const [externalSignature, setExternalSignature] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [attempted, setAttempted] = useState(Boolean(entry?.kibble?.claimReceipt));
+  const [error, setError] = useState("");
+  const boardVerified = Boolean(entry?.kibble?.boardClaimVerifiedAt);
+
+  function preview() {
+    setError(""); setConfirmed(false); setAttempted(false);
+    if (!jobId || !did) return setError("A valid Kibble job and DID are required.");
+    if (mission.claimable === false) return setError("This JOB came from the room fallback. Wait for the Kibble board before claiming it.");
+    const normalized = createKibbleClaim(jobId);
+    const nonce = nextNonce(localStorage.getItem(`agent-guild:nonce:${did}:kibble`) || undefined);
+    setDry({ nonce, normalized, payload: createSigningPayload("kibble", nonce, normalized) });
+  }
+
+  async function signLocal() {
+    if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer for this DID.");
+    try { const key = await unlockIdentity(identity, passphrase); setDry({ ...dry, signature: await signText(key, dry.payload) }); setPassphrase(""); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Kibble CLAIM signing failed."); }
+  }
+
+  async function signExternal() {
+    if (!dry || !did) return;
+    if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this exact Kibble CLAIM.");
+    setDry({ ...dry, signature: externalSignature.trim() }); setExternalSignature("");
+  }
+
+  async function publishClaim() {
+    if (!writesEnabled || !dry?.signature || !did || !confirmed || !jobId) return;
+    setAttempted(true); setError("");
+    try {
+      const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room: "kibble", from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
+      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Kibble CLAIM was rejected.");
+      localStorage.setItem(`agent-guild:nonce:${did}:kibble`, dry.nonce);
+      await verifyClaim();
+    } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Kibble CLAIM failed."} Do not resend this signature; check it again.`); }
+  }
+
+  async function verifyClaim() {
+    if (!dry?.signature || !did || !jobId) return;
+    setError("");
+    try {
+      const room = await fetchTechnocoreRoom("kibble");
+      const found = findPublishedMessage(room.messages.map((item) => ({ seq: item.seq, ts: item.timestamp || "", from: item.from, text: item.text, nonce: item.nonce || undefined })), { from: did, nonce: dry.nonce, text: dry.normalized });
+      if (!found) throw new Error("The signed CLAIM is not visible in #kibble yet.");
+      const claimReceipt = await createReceipt("kibble", found, dry.signature);
+      const boardJob = await fetchKibbleJobState(jobId);
+      if (!claimIsBoardVerified(boardJob, did)) {
+        await onUpdate(entry?.state || "planned", { kibble: { jobId, claimReceipt } });
+        throw new Error("The room receipt matched, but the Kibble board has not bound this job to your DID. Work must not start yet.");
+      }
+      await onUpdate("claimed", { kibble: { jobId, claimReceipt, boardClaimVerifiedAt: new Date().toISOString() } });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Kibble CLAIM verification failed."); }
+  }
+
+  if (!jobId) return <div className="write-lock"><LockKeyhole /><span><strong>Invalid Kibble mission ID.</strong><small>This mission cannot enter the community state machine.</small></span></div>;
+  if (boardVerified) return <div className="signed-ready"><ShieldCheck /><span><strong>Kibble CLAIM confirmed by the board.</strong><small>{jobId} is bound to this DID. RESULT remains separately approval-gated.</small></span></div>;
+  return <div className="kibble-claim-gate proof-stage-card">
+    <div className="proof-stage-heading"><span>00</span><div><p className="panel-kicker">KIBBLE COMMUNITY GATE</p><h3>Claim first, then wait for the board.</h3><p>A room receipt alone is not enough. Agent Guild will not unlock RESULT until Kibble binds this job to the same DID.</p></div></div>
+    {mission.claimable === false ? <div className="write-lock"><Clock3 /><span><strong>Board verification is unavailable.</strong><small>This JOB is visible in #kibble but cannot be claimed safely yet.</small></span></div> : !dry ? <button className="button button-secondary" onClick={preview}>PREVIEW EXACT CLAIM — DO NOT SEND</button> : <><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/kibble</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>EXACT CLAIM</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div>
+      {!dry.signature && identity?.did === did ? <><label>Unlock once to sign this CLAIM<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void signLocal()}>SIGN CLAIM LOCALLY — DO NOT SEND</button></> : null}
+      {!dry.signature && identity?.did !== did ? <><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact Kibble CLAIM" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" onClick={() => void signExternal()}>VERIFY CLAIM SIGNATURE</button></> : null}
+      {dry.signature && writesEnabled && !attempted ? <><label className="check-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed this exact Kibble CLAIM. Publish this one message.</label><button className="button button-primary" disabled={!confirmed} onClick={() => void publishClaim()}>PUBLISH THIS EXACT CLAIM</button></> : null}
+      {dry.signature && writesEnabled && attempted ? <div className="readback-retry"><strong>The CLAIM signature will not be sent again.</strong><p>Re-check both #kibble and the board.</p><button className="button button-secondary" onClick={() => void verifyClaim()}>CHECK CLAIM AGAIN</button></div> : null}
+      {dry.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>The exact CLAIM is ready for a reviewed staging deployment.</small></span></div> : null}
+    </>}
+    {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
+  </div>;
 }
 
 function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; rooms: PublicRoom[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
@@ -1176,6 +1268,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   const [reviewed, setReviewed] = useState(false);
   const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
   const [finalConfirm, setFinalConfirm] = useState(false);
+  const [publishAttempted, setPublishAttempted] = useState(false);
   const [error, setError] = useState("");
   const [reviewerDid, setReviewerDid] = useState("");
   const [reviewHash, setReviewHash] = useState("");
@@ -1195,6 +1288,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
     setDry(null);
     setError("");
     setFinalConfirm(false);
+    setPublishAttempted(false);
   }
 
   useEffect(() => {
@@ -1215,14 +1309,17 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   }, [entry?.evidence, mission, proofEvidence.ready]);
 
   function preview() {
-    setError("");
+    setError(""); setPublishAttempted(false);
     if (!mission) return setError("Choose a mission first.");
     if (!did) return setError("Create or connect a DID first.");
     if (sharing === "private") return setError("Choose a public room only if you want to publish this finished result.");
     if (!proofEvidence.ready || !resultHash) return setError("Attach one artifact and one test result before preparing public proof.");
     if (!room) return setError("Choose the Technocore room where this finished result belongs.");
+    if (mission.source === "kibble-community" && !entry?.kibble?.boardClaimVerifiedAt) return setError("Kibble must bind the CLAIM to this DID before RESULT can be prepared.");
     try {
-      const normalized = sweepTechnocoreText(bindResultDigest(text, resultHash));
+      const bound = bindResultDigest(text, resultHash);
+      const jobId = kibbleJobId(mission.id);
+      const normalized = sweepTechnocoreText(mission.source === "kibble-community" && jobId ? createKibbleResult(jobId, bound) : bound);
       const key = `agent-guild:nonce:${did}:${room}`;
       const nonce = nextNonce(localStorage.getItem(key) || undefined);
       setDry({ nonce, normalized, payload: createSigningPayload(room, nonce, normalized) });
@@ -1250,26 +1347,46 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
 
   async function publish() {
     if (!writesEnabled || !dry?.signature || !did || !finalConfirm || !entry) return;
-    setError("");
+    setError(""); setPublishAttempted(true);
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
       if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       await onUpdate("published");
+      await verifyReadback();
+    } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Public action failed."} Do not resend this signature; use CHECK READ-BACK AGAIN.`); }
+  }
+
+  async function verifyReadback() {
+    if (!dry?.signature || !did || !entry) return;
+    setError("");
+    try {
       const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
       if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
       const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
       const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
-      localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
       const receipt = await createReceipt(room, found, dry.signature, resultHash);
+      if (mission?.source === "kibble-community") {
+        const jobId = kibbleJobId(mission.id);
+        if (!jobId) throw new Error("The Kibble job ID is invalid.");
+        const boardJob = await fetchKibbleJobState(jobId);
+        if (!resultIsBoardVerified(boardJob, did)) {
+          await onUpdate("published", { kibble: { ...(entry.kibble || { jobId }), jobId, resultReceipt: receipt } });
+          throw new Error("The RESULT receipt matched #kibble, but the board has not stored its result hash yet. Do not request review.");
+        }
+        await onUpdate("verified", { receipt, kibble: { ...(entry.kibble || { jobId }), jobId, resultReceipt: receipt, boardResultHash: boardJob!.resultHash, boardResultVerifiedAt: new Date().toISOString() } });
+        return;
+      }
       await onUpdate("verified", { receipt });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Public action failed."); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Read-back verification failed."); }
   }
 
   async function verifyReview() {
-    if (!entry?.receipt?.resultHash || !did || entry.receipt.resultHash !== resultHash) return setError("A verified receipt for the current evidence digest is required before review.");
-    if (!isIndependentReview(did, reviewerDid, entry.receipt.resultHash, reviewHash)) return setError("Reviewer must be a different DID and reference the exact result hash.");
-    const payload = `${reviewHash}|${did}|${entry.mission.id}`;
+    const targetHash = mission?.source === "kibble-community" ? entry?.kibble?.boardResultHash : entry?.receipt?.resultHash;
+    if (!targetHash || !did || !mission || !receiptMatchesCurrentEvidence) return setError("A verified receipt for the current result is required before review.");
+    if (!isIndependentReview(did, reviewerDid, targetHash, reviewHash)) return setError("Reviewer must be a different DID and reference the exact result hash.");
+    const payload = `${reviewHash}|${did}|${mission.id}`;
     if (!await verifyDidSignature(reviewerDid, payload, reviewSignature)) return setError("Review signature is invalid.");
     await onUpdate("reviewed", { review: { reviewerDid, resultHash: reviewHash, signature: reviewSignature, verifiedAt: new Date().toISOString() } });
   }
@@ -1305,15 +1422,19 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   }
 
   function reviewRequestText() {
-    if (!entry?.receipt?.resultHash || entry.receipt.resultHash !== resultHash || !did || !mission) return "";
-    return `Independent review requested\nMission: ${mission.title}\nWorker DID: ${did}\nResult hash: ${entry.receipt.resultHash}\nSign exactly: ${entry.receipt.resultHash}|${did}|${mission.id}`;
+    const targetHash = mission?.source === "kibble-community" ? entry?.kibble?.boardResultHash : entry?.receipt?.resultHash;
+    if (!targetHash || !receiptMatchesCurrentEvidence || !did || !mission) return "";
+    const kibbleLine = mission.source === "kibble-community" ? `\nKibble ATTEST must include: rh:${targetHash}` : "";
+    return `Independent review requested\nMission: ${mission.title}\nWorker DID: ${did}\nResult hash: ${targetHash}${kibbleLine}\nSign exactly: ${targetHash}|${did}|${mission.id}`;
   }
 
-  const receiptMatchesCurrentEvidence = Boolean(entry?.receipt?.resultHash && resultHash && entry.receipt.resultHash === resultHash);
+  const receiptMatchesCurrentEvidence = Boolean(entry?.receipt?.resultHash && resultHash && entry.receipt.resultHash === resultHash &&
+    (mission?.source !== "kibble-community" || entry.kibble?.boardResultHash && entry.kibble.boardResultVerifiedAt));
 
   return <Modal title="PROOF WORKSPACE" onClose={onClose} wide>
     {!mission ? <EmptyState icon={<Search />} title="No mission selected" detail="Choose a live signal, community job, or local mission first." /> : <>
       <div className="proof-context"><small>{sourceLabel(mission.source)}</small><strong>{mission.title}</strong><span>Current state: {(entry?.state || "planned").toUpperCase()}</span></div>
+      {mission.source === "kibble-community" ? <KibbleClaimGate mission={mission} entry={entry} did={did} identity={identity} onUpdate={onUpdate} /> : null}
       <div className="proof-explainer">
         <FileCheck2 size={22} />
         <div><strong>Choose what happens to the finished work.</strong><p>Keep it private, or prepare one public result tied to the exact artifact and test evidence. Nothing is sent from this choice.</p></div>
@@ -1342,7 +1463,8 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
         {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
         {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
-        {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
+        {dry?.signature && writesEnabled && !publishAttempted ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
+        {dry?.signature && writesEnabled && publishAttempted ? <div className="readback-retry"><strong>This signature will not be sent again.</strong><p>Only re-check Technocore for the same DID, nonce, exact text and result digest.</p><button className="button button-secondary" onClick={() => void verifyReadback()}>CHECK READ-BACK AGAIN</button></div> : null}
         {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
       </div>
       <div className="receipt-stage proof-stage-card">

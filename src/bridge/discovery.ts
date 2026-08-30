@@ -21,6 +21,8 @@ export type JobCandidate = {
   authorDid?: string;
   risk: "low" | "medium" | "high";
   observedAt: string | null;
+  claimable: boolean;
+  boardState: "verified-open" | "room-unverified";
 };
 
 export type DiscoverySnapshot = {
@@ -112,7 +114,9 @@ function sanitizeJob(input: unknown): JobCandidate[] {
   const authorDid = clean(value.authorDid, 180);
   return [{ kind: "job", id, title, summary, risk: value.risk as JobCandidate["risk"],
     ...(DID.test(authorDid) ? { authorDid } : {}),
-    observedAt: typeof value.observedAt === "string" && Number.isFinite(Date.parse(value.observedAt)) ? new Date(value.observedAt).toISOString() : null }];
+    observedAt: typeof value.observedAt === "string" && Number.isFinite(Date.parse(value.observedAt)) ? new Date(value.observedAt).toISOString() : null,
+    claimable: value.claimable === true,
+    boardState: value.boardState === "verified-open" ? "verified-open" : "room-unverified" }];
 }
 
 function sanitizeSuggestion(input: unknown): WorkSuggestion[] {
