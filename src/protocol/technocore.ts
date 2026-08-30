@@ -1,4 +1,5 @@
 import type { Receipt } from "./models";
+import { messageContainsResultDigest } from "../ledger/proof";
 
 const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const DID_PATTERN = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
@@ -84,6 +85,9 @@ export async function createReceipt(
   resultHash?: string,
 ): Promise<Receipt> {
   assertRoom(room);
+  if (resultHash && !messageContainsResultDigest(published.text, resultHash)) {
+    throw new Error("Published result does not contain the exact evidence digest.");
+  }
   return {
     room,
     seq: published.seq,

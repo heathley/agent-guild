@@ -25,6 +25,7 @@ import {
 import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } from "./ledger/storage";
 import { attachEvidenceFromEvent, attachManualEvidence } from "./ledger/evidence";
 import { recordActivityFromEvent } from "./ledger/activity";
+import { bindResultDigest, createEvidenceBundleDigest, summarizeProofEvidence } from "./ledger/proof";
 import type { AgentActivity, LedgerEntry, Mission, ProofState } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
@@ -522,7 +523,7 @@ function App() {
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
       {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} agentConnected={agentConnected} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => { setAgentConnected(true); void handleAgentEvent(event); }} /> : null}
-      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
+      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} rooms={roomFeed.data} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
   );
@@ -967,10 +968,12 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   </Modal>;
 }
 
-function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
-  const [room, setRoom] = useState(mission?.room || "");
+function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; rooms: PublicRoom[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
+  const [sharing, setSharing] = useState<"private" | "mission" | "other">(mission?.room ? "mission" : "private");
+  const [otherRoom, setOtherRoom] = useState("");
   const [text, setText] = useState("");
-  const [resultHash, setResultHash] = useState(mission?.resultHash || "");
+  const [resultHash, setResultHash] = useState("");
+  const [digestStatus, setDigestStatus] = useState<"waiting" | "creating" | "ready">("waiting");
   const [passphrase, setPassphrase] = useState("");
   const [reviewed, setReviewed] = useState(false);
   const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
@@ -985,14 +988,43 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
   const [ledgerBackup, setLedgerBackup] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const proofEvidence = useMemo(() => summarizeProofEvidence(entry?.evidence || []), [entry?.evidence]);
+  const room = sharing === "mission" ? mission?.room || "" : sharing === "other" ? otherRoom : "";
+  const roomChoices = useMemo(() => [...new Set(rooms.map((item) => item.room))].sort(), [rooms]);
+
+  function chooseSharing(next: "private" | "mission" | "other") {
+    setSharing(next);
+    setDry(null);
+    setError("");
+    setFinalConfirm(false);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    setDry(null);
+    if (!mission || !proofEvidence.ready) {
+      setResultHash("");
+      setDigestStatus("waiting");
+      return () => { cancelled = true; };
+    }
+    setDigestStatus("creating");
+    void createEvidenceBundleDigest(mission.id, entry?.evidence || []).then((digest) => {
+      if (cancelled) return;
+      setResultHash(digest || "");
+      setDigestStatus(digest ? "ready" : "waiting");
+    });
+    return () => { cancelled = true; };
+  }, [entry?.evidence, mission, proofEvidence.ready]);
 
   function preview() {
     setError("");
     if (!mission) return setError("Choose a mission first.");
     if (!did) return setError("Create or connect a DID first.");
-    if (!/^[A-Za-z0-9:_-]{8,160}$/.test(resultHash.trim())) return setError("Add a safe result hash or digest (8–160 letters, numbers, :, _, or -).");
+    if (sharing === "private") return setError("Choose a public room only if you want to publish this finished result.");
+    if (!proofEvidence.ready || !resultHash) return setError("Attach one artifact and one test result before preparing public proof.");
+    if (!room) return setError("Choose the Technocore room where this finished result belongs.");
     try {
-      const normalized = sweepTechnocoreText(text);
+      const normalized = sweepTechnocoreText(bindResultDigest(text, resultHash));
       const key = `agent-guild:nonce:${did}:${room}`;
       const nonce = nextNonce(localStorage.getItem(key) || undefined);
       setDry({ nonce, normalized, payload: createSigningPayload(room, nonce, normalized) });
@@ -1031,7 +1063,7 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
-      const receipt = await createReceipt(room, found, dry.signature, resultHash.trim());
+      const receipt = await createReceipt(room, found, dry.signature, resultHash);
       await onUpdate("verified", { receipt });
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Public action failed."); }
   }
@@ -1084,29 +1116,44 @@ function ProofModal({ mission, entry, did, identity, ledger, onLedger, onClose, 
       <div className="proof-context"><small>{sourceLabel(mission.source)}</small><strong>{mission.title}</strong><span>Current state: {(entry?.state || "planned").toUpperCase()}</span></div>
       <div className="proof-explainer">
         <FileCheck2 size={22} />
-        <div><strong>Use this after the work is finished.</strong><p>First connect the public message to the exact artifact. Agent Guild then checks the public receipt. Only after that can another DID review the same result.</p></div>
+        <div><strong>Choose what happens to the finished work.</strong><p>Keep it private, or prepare one public result tied to the exact artifact and test evidence. Nothing is sent from this choice.</p></div>
       </div>
-      <div className="proof-stage-list" aria-label="Proof workspace steps">
-        <span className="is-current"><b>1</b><small>PREVIEW RESULT</small></span>
+      <div className="proof-sharing" aria-label="Choose private or public proof">
+        <button className={sharing === "private" ? "is-selected" : ""} aria-pressed={sharing === "private"} onClick={() => chooseSharing("private")}><LockKeyhole /><span><strong>KEEP PRIVATE</strong><small>Evidence stays in this browser. State remains planned.</small></span></button>
+        <button className={sharing === "mission" ? "is-selected" : ""} aria-pressed={sharing === "mission"} disabled={!mission.room} onClick={() => chooseSharing("mission")}><MessageSquareText /><span><strong>USE MISSION ROOM</strong><small>{mission.room ? `Prepare for #${mission.room}` : "This private mission has no public room."}</small></span></button>
+        <button className={sharing === "other" ? "is-selected" : ""} aria-pressed={sharing === "other"} onClick={() => chooseSharing("other")}><Search /><span><strong>CHOOSE A ROOM</strong><small>Select a relevant live Technocore room.</small></span></button>
+      </div>
+      {sharing === "private" ? <div className="private-proof-state"><LockKeyhole /><div><strong>This mission can stay private.</strong><p>Your attached evidence remains local. Nothing is signed, published, verified, or offered for independent review.</p></div></div> : <>
+      <div className="proof-stage-list" aria-label="Public proof steps">
+        <span className={!entry?.receipt ? "is-current" : "is-complete"}><b>1</b><small>PREVIEW RESULT</small></span>
         <span className={entry?.receipt ? "is-complete" : ""}><b>2</b><small>VERIFY RECEIPT</small></span>
         <span className={entry?.review ? "is-complete" : ""}><b>3</b><small>INDEPENDENT REVIEW</small></span>
       </div>
       <div className="proof-form proof-stage-card">
         <div className="proof-stage-heading"><span>01</span><div><p className="panel-kicker">PREPARE A PUBLIC RESULT</p><h3>Preview first. Nothing is sent.</h3><p>Fill this only when you have a real artifact and a test or other checkable result.</p></div></div>
-        <label>Where should the result appear?<small>Technocore public room</small><input value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }} placeholder="room-name" /></label>
-        <label>Which exact artifact are you proving?<small>Paste its safe digest, for example sha256:…</small><input value={resultHash} onChange={(event) => { setResultHash(event.target.value); setDry(null); }} placeholder="sha256:…" /></label>
+        {sharing === "mission" ? <div className="chosen-room"><small>PUBLIC DESTINATION</small><strong>#{mission.room}</strong><span>Selected from this mission. You do not need to type a room name.</span></div> : <label>Choose where this finished result belongs<small>Live Technocore rooms · no # or URL to type</small><select value={otherRoom} onChange={(event) => { setOtherRoom(event.target.value); setDry(null); }}><option value="">Choose a public room…</option>{roomChoices.map((item) => <option value={item} key={item}>#{item}</option>)}</select>{!roomChoices.length ? <span className="field-help">No live room list is available. Close this window, refresh Technocore, then return.</span> : null}</label>}
+        <div className="evidence-readiness" aria-label="Evidence needed for public proof">
+          <div className={proofEvidence.artifact ? "is-ready" : ""}>{proofEvidence.artifact ? <Check /> : <Clock3 />}<span><strong>ARTIFACT</strong><small>{proofEvidence.artifact ? proofEvidence.artifact.digest || proofEvidence.artifact.publicUrl : "Attach one Commit reference in the Mission Pack."}</small></span></div>
+          <div className={proofEvidence.check ? "is-ready" : ""}>{proofEvidence.check ? <Check /> : <Clock3 />}<span><strong>TEST OR CHECK</strong><small>{proofEvidence.check ? proofEvidence.check.digest || proofEvidence.check.publicUrl : "Attach one Test reference in the Mission Pack."}</small></span></div>
+        </div>
+        {resultHash ? <div className="result-digest"><small>AUTOMATIC RESULT DIGEST</small><code>{resultHash}</code><span>Created from this mission ID plus the attached artifact and test references. It will be added to the public message automatically.</span></div> : <div className="write-lock"><LockKeyhole /><span><strong>{digestStatus === "creating" ? "Creating the result digest…" : "Public preview is not ready yet."}</strong><small>Close this window and attach both an artifact and a test under the Mission Pack. Do not invent a hash.</small></span></div>}
         <label>What should the public record say?<small>Describe what was made and what was actually tested.</small><textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="An honest, one-off description of what the contribution does and how it was checked." /></label>
-        {!dry ? <button className="button button-primary" onClick={preview}>PREVIEW — DO NOT SEND</button> : <><p className="panel-kicker">EXACT MESSAGE REVIEW</p><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
+        {!dry ? <button className="button button-primary" disabled={!room || !proofEvidence.ready || !resultHash || !text.trim()} onClick={preview}>PREVIEW EXACT RESULT — DO NOT SEND</button> : <><p className="panel-kicker">EXACT MESSAGE REVIEW</p><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT · DIGEST INCLUDED</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
         {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
         {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
         {dry?.signature && writesEnabled ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
         {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
       </div>
+      <div className="receipt-stage proof-stage-card">
+        <div className="proof-stage-heading"><span>02</span><div><p className="panel-kicker">VERIFY THE PUBLIC RECEIPT</p><h3>Agent Guild reads the room back.</h3><p>Verification requires the same DID, nonce, exact text, and automatic result digest. A successful POST alone is never proof.</p></div></div>
+        {entry?.receipt?.resultHash ? <div className="signed-ready"><ShieldCheck /><span><strong>Public receipt verified.</strong><small>#{entry.receipt.room} · sequence {entry.receipt.seq} · {entry.receipt.resultHash}</small></span></div> : <div className="write-lock"><Clock3 /><span><strong>No verified public receipt yet.</strong><small>This remains locked until one approved publication is found by read-back. Agent Guild never retries automatically.</small></span></div>}
+      </div>
       <div className="review-form proof-stage-card">
-        <div className="proof-stage-heading"><span>02</span><div><p className="panel-kicker">INDEPENDENT REVIEW</p><h3>A different identity checks the same result.</h3><p>This step stays locked until the public receipt is verified.</p></div></div>
+        <div className="proof-stage-heading"><span>03</span><div><p className="panel-kicker">INDEPENDENT REVIEW</p><h3>A different identity checks the same result.</h3><p>This step stays locked until the public receipt is verified.</p></div></div>
         {entry?.receipt?.resultHash ? <><div className="review-request"><code>{reviewRequestText()}</code><div className="mission-actions"><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(reviewRequestText()); setCopiedReview(true); }}>{copiedReview ? "COPIED" : "COPY REVIEW REQUEST"}</button><button className="button button-secondary" disabled={entry.state === "review-requested" || entry.state === "reviewed"} onClick={() => void onUpdate("review-requested")}>{entry.state === "review-requested" ? "REQUEST MARKED AS SENT" : "I SENT THIS REQUEST"}</button></div></div><p className="fine-print">Send this yourself to a reviewer you choose. Agent Guild never contacts anyone automatically.</p><label>Reviewer DID<small>Must be different from the worker DID</small><input value={reviewerDid} onChange={(event) => setReviewerDid(event.target.value)} /></label><label>Exact result hash<small>Must match the verified public receipt</small><input value={reviewHash} onChange={(event) => setReviewHash(event.target.value)} /></label><label>Reviewer signature<small>Signed over resultHash | workerDid | missionId</small><input value={reviewSignature} onChange={(event) => setReviewSignature(event.target.value)} /></label><button className="button button-secondary" onClick={() => void verifyReview()}>CHECK REVIEW SIGNATURE</button></> : <div className="write-lock"><LockKeyhole /><span><strong>Review is not available yet.</strong><small>First publish one approved result and let Agent Guild match its DID, nonce, exact text, and result hash by read-back.</small></span></div>}
       </div>
+      </>}
       <details className="restore-zone ledger-backup"><summary>OPTIONAL · BACK UP THIS BROWSER’S MISSION RECORDS</summary><p className="fine-print">This is not part of publishing or review. It downloads only sanitized mission and proof records in an encrypted file. Use a separate passphrase of at least 12 characters.</p><label>Backup passphrase<input type="password" value={ledgerPassphrase} onChange={(event) => { setLedgerPassphrase(event.target.value); setLedgerStatus(""); }} /></label><div className="mission-actions"><button className="button button-secondary" disabled={ledgerPassphrase.length < 12} onClick={() => void backupLedger()}>DOWNLOAD ENCRYPTED BACKUP</button><label className={`button button-secondary file-button ${ledgerPassphrase.length < 12 ? "is-disabled" : ""}`}>RESTORE A BACKUP FILE<input type="file" accept="application/json,.json" disabled={ledgerPassphrase.length < 12} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; void restoreLedgerFile(file); }} /></label></div>{ledgerStatus ? <p className="signer-result verified" role="status"><ShieldCheck size={16} />{ledgerStatus}</p> : null}<details className="advanced-paste"><summary>Advanced recovery: paste encrypted JSON</summary><label>Encrypted backup JSON<textarea value={ledgerBackup} onChange={(event) => setLedgerBackup(event.target.value)} /></label><button className="button button-secondary" disabled={ledgerPassphrase.length < 12 || !ledgerBackup.trim()} onClick={() => void restoreLedger()}>RESTORE PASTED BACKUP</button></details></details>
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
       {!reviewed ? <p className="fine-print">No public request or message is sent from this screen until the exact-text review is complete.</p> : null}

@@ -10,7 +10,7 @@ Agent Guild is a model-neutral mission control for AI agents working with Techno
 - Latest-window room inspection with checked sequence coverage, sanitized messages, search, and explicit mission finish lines.
 - Local Ed25519 `did:key` creation with AES-256-GCM encrypted IndexedDB storage and encrypted JSON backup.
 - External signer challenge flow; no seed or private-key import.
-- Exact Technocore sweep, monotonic nonce, signed-message schema, read-back matching, and sanitized receipt generation.
+- Exact Technocore sweep, monotonic nonce, signed-message schema, evidence-digest-bound read-back matching, and sanitized receipt generation.
 - Separate `planned`, `published`, `verified`, `review-requested`, and `reviewed` states.
 - Independent review validation: a different DID must sign the same result hash.
 - A model-neutral, npm-ready MCP connector package with eight narrow lifecycle tools and no general message-posting tool.
@@ -36,6 +36,8 @@ Press **SEND TO MY AGENT** once. Then tell the connected agent in ordinary langu
 > Check Agent Guild for my mission, read the finish line back to me, then start.
 
 The person chooses the mission and approves every public action. The connected agent decides how to research, build, and test it. In this first release, the agent does not silently claim public jobs or publish messages on the person's behalf.
+
+After the work is finished, **Proof Workspace** offers an explicit choice: keep the result private, use the mission's Technocore room, or choose another live public room. Public preview requires both an attached artifact reference and a test/check reference. Agent Guild creates a deterministic SHA-256 digest from that evidence bundle, adds it to the exact public message, and refuses to create a verified receipt unless read-back contains the same digest. Independent review remains locked until a different DID signs that verified digest.
 
 Kibble is a separate community service and can take time to wake after being idle. Agent Guild now distinguishes four cases instead of showing a blank board: loading, unavailable, loaded with no claimable jobs, and loaded with open jobs. Claimed, attested, and rejected jobs are summarized but cannot be selected as new work.
 

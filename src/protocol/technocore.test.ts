@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSigningPayload,
+  createReceipt,
   findPublishedMessage,
   isIndependentReview,
   nextNonce,
@@ -46,5 +47,11 @@ describe("Technocore protocol", () => {
     expect(isIndependentReview(worker, worker, "abc", "abc")).toBe(false);
     expect(isIndependentReview(worker, reviewer, "abc", "xyz")).toBe(false);
   });
-});
 
+  it("creates a receipt only when the public text contains the exact result digest", async () => {
+    const digest = "sha256:1234567890abcdef";
+    const message = { seq: 7, ts: "2026-08-29T00:00:00Z", from: worker, nonce: "11", text: `Built and tested. Result digest: ${digest}` };
+    await expect(createReceipt("general", message, "x".repeat(86), digest)).resolves.toMatchObject({ resultHash: digest });
+    await expect(createReceipt("general", { ...message, text: "Built and tested." }, "x".repeat(86), digest)).rejects.toThrow(/exact evidence digest/);
+  });
+});
