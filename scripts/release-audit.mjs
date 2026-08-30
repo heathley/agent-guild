@@ -34,7 +34,7 @@ const contentRules = [
 ];
 
 for (const path of releaseFiles) {
-  if (path === ".env.example") continue;
+  if (path === ".env.example" || path === ".env.staging.example") continue;
   for (const [pattern, label] of forbiddenTrackedPaths) {
     if (pattern.test(path)) findings.push({ path, label });
   }
