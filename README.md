@@ -89,7 +89,7 @@ npm run connector:package-smoke
 npm pack ./packages/connector --dry-run
 ```
 
-`@agent-guild/connector@0.1.0-beta.2` is the reviewed connector release prepared for npm. Production builds set `VITE_CONNECTOR_PUBLISHED=true` only after that exact package is available, so the website never shows an install command for an unpublished version.
+`@agent-guild/connector@0.1.0-beta.2` is the reviewed public npm release. Production builds set `VITE_CONNECTOR_PUBLISHED=true` only for that exact available version, so the website never shows an install command for an unpublished package.
 
 The connector works with local STDIO MCP clients, not only Codex:
 
@@ -204,7 +204,7 @@ The read-only discovery flow, self-service local and external identity paths, au
 
 - create the public `heathley/agent-guild` repository and push the reviewed local commits;
 - enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
-- obtain separate approval before each deployment, npm publication, Git push, or public message.
+- obtain separate approval before each future deployment, npm publication, Git push, or public message.
 
 The repository deliberately has no assumed public remote. Agent Guild is available under the MIT License, but it does not treat the live preview or a local commit hash as a public source artifact. The GitHub repository must still be created by the owner before the first push.
 
