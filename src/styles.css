@@ -353,6 +353,9 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .provider-tabs { display: flex; overflow-x: auto; margin: 10px 0 0; border-bottom: 1px solid var(--line); }
 .provider-tabs button { min-width: max-content; padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--secondary); cursor: pointer; font: 700 9px "Space Mono", monospace; }
 .provider-tabs button[aria-selected="true"] { color: var(--ice); border-color: var(--cyan); }
+.provider-guide-note { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0; padding: 12px 14px; border-left: 2px solid var(--cyan); background: rgba(0, 180, 216, .05); color: var(--secondary); font-size: .82rem; line-height: 1.55; }
+.provider-guide-note svg { flex: 0 0 auto; margin-top: 2px; color: var(--cyan); }
+.provider-guide-note strong { display: inline-block; margin-right: 6px; color: var(--ice); font: 700 .72rem "Space Mono", monospace; letter-spacing: .08em; }
 .connection-guide { display: grid; gap: 1px; margin-top: 18px; padding: 1px; background: var(--line); }
 .connection-step { display: grid; grid-template-columns: 44px 1fr; gap: 14px; padding: 18px; background: var(--base); }
 .connection-step-number { color: var(--cyan); font: 700 14px "Space Mono", monospace; }

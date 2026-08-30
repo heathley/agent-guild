@@ -165,7 +165,7 @@ function App() {
       const restored = parseRelayPairing(saved, edgeOrigin(), connectedDid);
       void registerRelayPairing(restored).then(() => {
         setPairing(restored);
-        setHandoffStatus("Secure relay restored for this browser tab. No pairing file needed after refresh.");
+        setHandoffStatus("Secure connector session restored for this browser tab. The agent provider is not detected; no new pairing file is needed.");
       }).catch(() => sessionStorage.removeItem("agent-guild:active-pairing"));
     } catch { sessionStorage.removeItem("agent-guild:active-pairing"); }
   }, [connectedDid, pairing]);
@@ -855,7 +855,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
       setSession(restored);
       setSessionSource("restored");
       setRelayState("ready");
-      setStatus("Existing pairing restored. The DID was not recreated and no new file is needed.");
+      setStatus("Existing pairing restored. The temporary connector session is active again; no new pairing file is needed.");
       onPairingReady(restored);
     } catch (error) {
       setSession(null);
@@ -905,6 +905,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
     <p className="modal-lead">Connect in three small steps. Your AI stays where it already runs; Agent Guild receives only safe mission updates.</p>
     <p className="panel-kicker">CHOOSE THE AI YOU USE</p>
     <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE CODE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
+    <p className="provider-guide-note"><Eye size={17} /><span><strong>SETUP GUIDES ONLY</strong> Choosing a tab changes the instructions. It does not switch your agent or detect which provider is connected.</span></p>
     <div className="connection-guide">
       <section className="connection-step">
         <span className="connection-step-number">01</span>
@@ -956,7 +957,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
       </section>
     </div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
-    <div className={`connector-status-card ${agentConnected ? "is-connected" : ""}`}>{agentConnected ? <><Check size={18} /><span><strong>AGENT CONNECTED</strong><small>Agent Guild received a safe lifecycle event from this DID.</small></span></> : <><Clock3 size={18} /><span><strong>{relayState === "ready" ? "WEBSITE READY · WAITING FOR YOUR AGENT" : "LOCAL PREVIEW · MANUAL RELAY"}</strong><small>{relayState === "ready" ? "Finish steps 2 and 3. This changes automatically after the first valid agent event." : "Paste the encrypted fallback envelope below."}</small></span></>}</div>
+    <div className={`connector-status-card ${agentConnected ? "is-connected" : ""}`}>{agentConnected ? <><Check size={18} /><span><strong>CONNECTOR SESSION ACTIVE</strong><small>A valid local connector event was received. Agent provider is not detected.</small></span></> : <><Clock3 size={18} /><span><strong>{relayState === "ready" ? "WEBSITE READY · WAITING FOR YOUR AGENT" : "LOCAL PREVIEW · MANUAL RELAY"}</strong><small>{relayState === "ready" ? "Finish steps 2 and 3. This changes automatically after the first valid agent event." : "Paste the encrypted fallback envelope below."}</small></span></>}</div>
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
