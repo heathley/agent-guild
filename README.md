@@ -64,10 +64,15 @@ Identity backups, pairing files, ledger backups, `.dev.vars`, local Wrangler sta
 
 ## MCP connector
 
-The website downloads a one-time `agent-guild-pairing.json` file. It contains temporary session secrets, expires in 24 hours, and is ignored by Git. Keep it local and delete it after pairing. During local development, run:
+The website downloads a one-time `agent-guild-pairing.json` file. It contains temporary session secrets, expires in 24 hours, and is ignored by Git. Keep it local, keep it outside version control, and delete it after the session expires. During local development, run:
+
+Move the downloaded file out of macOS Downloads before connecting. Downloads can be denied to GUI-launched MCP clients even when Terminal can read it:
 
 ```bash
-npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json
+mkdir -p "$HOME/.agent-guild"
+mv "$HOME/Downloads/agent-guild-pairing.json" "$HOME/.agent-guild/agent-guild-pairing.json"
+chmod 600 "$HOME/.agent-guild/agent-guild-pairing.json"
+npm run connector -- pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 ```
 
 The command contains no secret. On a deployed preview, encrypted lifecycle events arrive automatically. On the Vite-only local preview, the connector returns an encrypted fallback envelope that can be pasted into the connector panel.
@@ -88,14 +93,13 @@ The connector works with local STDIO MCP clients, not only Codex:
 
 ```bash
 # Codex CLI / desktop app
-codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/Downloads/agent-guild-pairing.json"
+codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 
 # Claude Code (local CLI, not Claude web)
-claude mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/Downloads/agent-guild-pairing.json"
-
-# Cursor local CLI/editor
-agent mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/Downloads/agent-guild-pairing.json"
+claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 ```
+
+For Cursor, configure `~/.cursor/mcp.json` with command `npx` and arguments `-y`, `@agent-guild/connector@0.1.0-beta.1`, `pair-file`, `${userHome}/.agent-guild/agent-guild-pairing.json`, then restart Cursor.
 
 For another local STDIO MCP client, use command `npx` with these arguments in order: `-y`, `@agent-guild/connector@0.1.0-beta.1`, `pair-file`, and the absolute path to the downloaded pairing file. A browser-only or remote-only agent cannot open a file stored on the user's computer.
 

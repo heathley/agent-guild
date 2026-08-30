@@ -8,13 +8,21 @@ The connector receives encrypted mission assignments and returns only allowliste
 
 1. Create or restore an identity in Agent Guild.
 2. Download a temporary pairing file from **Connect your agent**.
-3. Add this stdio command to the MCP client:
+3. Move it out of macOS Downloads into a private local folder that the MCP client can read, and limit it to your user:
 
 ```sh
-npx @agent-guild/connector pair-file /absolute/path/to/agent-guild-pairing.json
+mkdir -p "$HOME/.agent-guild"
+mv "$HOME/Downloads/agent-guild-pairing.json" "$HOME/.agent-guild/agent-guild-pairing.json"
+chmod 600 "$HOME/.agent-guild/agent-guild-pairing.json"
 ```
 
-4. Call `guild_status` from the agent.
+4. Add this stdio command to the MCP client:
+
+```sh
+npx @agent-guild/connector pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
+```
+
+5. Restart the MCP client, open a new agent session, and call `guild_status`.
 
 The pairing file is a temporary encrypted session pass. It is not a DID backup and does not contain the DID private key.
 

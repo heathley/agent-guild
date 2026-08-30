@@ -362,6 +362,12 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .connection-step h3 { margin: 3px 0 8px; color: var(--ice); font: 700 15px "Space Mono", monospace; }
 .connection-step p:not(.panel-kicker, .fine-print) { margin: 0 0 13px; color: var(--secondary); font-size: 12px; line-height: 1.6; }
 .connection-step .button { margin-top: 8px; }
+.safe-file-step { margin-top: 16px; padding: 13px; border: 1px solid var(--line); background: var(--surface); }
+.safe-file-step > strong { display: block; margin-bottom: 7px; color: var(--cyan); font: 700 9px "Space Mono", monospace; letter-spacing: .08em; }
+.safe-file-step > p { margin-bottom: 10px !important; }
+.safe-location-reminder { display: flex; align-items: flex-start; gap: 7px; margin-top: 14px; }
+.safe-location-reminder svg { flex: 0 0 auto; color: var(--green); }
+.cursor-setup > p { margin-bottom: 13px; }
 .step-complete { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--green); font: 700 9px "Space Mono", monospace; }
 .preview-setup { border-left: 2px solid var(--cyan); padding: 13px 14px; background: var(--surface); }
 .preview-setup > strong { color: var(--cyan); font: 700 9px "Space Mono", monospace; }
