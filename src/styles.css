@@ -338,15 +338,37 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .provider-tabs { display: flex; overflow-x: auto; margin: 10px 0 0; border-bottom: 1px solid var(--line); }
 .provider-tabs button { min-width: max-content; padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--secondary); cursor: pointer; font: 700 9px "Space Mono", monospace; }
 .provider-tabs button[aria-selected="true"] { color: var(--ice); border-color: var(--cyan); }
-.provider-steps { margin: 14px 0; padding-left: 20px; color: var(--secondary); font-size: 11px; line-height: 1.7; }
+.connection-guide { display: grid; gap: 1px; margin-top: 18px; padding: 1px; background: var(--line); }
+.connection-step { display: grid; grid-template-columns: 44px 1fr; gap: 14px; padding: 18px; background: var(--base); }
+.connection-step-number { color: var(--cyan); font: 700 14px "Space Mono", monospace; }
+.connection-step h3 { margin: 3px 0 8px; color: var(--ice); font: 700 15px "Space Mono", monospace; }
+.connection-step p:not(.panel-kicker, .fine-print) { margin: 0 0 13px; color: var(--secondary); font-size: 12px; line-height: 1.6; }
+.connection-step .button { margin-top: 8px; }
+.step-complete { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--green); font: 700 9px "Space Mono", monospace; }
+.preview-setup { border-left: 2px solid var(--cyan); padding: 13px 14px; background: var(--surface); }
+.preview-setup > strong { color: var(--cyan); font: 700 9px "Space Mono", monospace; }
+.preview-setup > p { margin: 7px 0 0 !important; }
+.manual-setup { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 13px; }
+.manual-setup summary { color: var(--ice); cursor: pointer; font: 700 9px "Space Mono", monospace; }
+.manual-setup b { color: var(--ice); }
+.manual-setup dl { display: grid; gap: 1px; padding: 1px; margin: 12px 0; background: var(--line); }
+.manual-setup dl > div { display: grid; grid-template-columns: minmax(125px, .8fr) 2fr; gap: 12px; padding: 11px; background: var(--base); }
+.manual-setup dt { color: var(--secondary); font: 700 8px "Space Mono", monospace; }
+.manual-setup dd { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; color: var(--ice); font-size: 11px; }
+.manual-setup dd code { border: 1px solid var(--line); padding: 3px 6px; background: var(--surface); white-space: normal; overflow-wrap: anywhere; }
 .command-box { border: 1px solid var(--line); background: var(--surface); display: flex; align-items: stretch; }
-.command-box code { flex: 1; padding: 14px; font-size: 10px; overflow-x: auto; white-space: nowrap; }
+.command-box code { flex: 1; padding: 14px; font-size: 10px; overflow-x: auto; white-space: normal; overflow-wrap: anywhere; }
 .command-box button { width: 48px; border: 0; border-left: 1px solid var(--line); background: var(--surface-light); color: var(--cyan); cursor: pointer; }
 .safety-list { margin: 20px 0; display: grid; gap: 10px; }
 .safety-list p { margin: 0; display: flex; gap: 10px; align-items: center; color: var(--secondary); font-size: 12px; }
 .safety-list svg { color: var(--green); width: 16px; }
 .fine-print { color: var(--secondary); font-size: 10px; line-height: 1.6; }
 .connector-status { color: var(--cyan); font: 700 10px "Space Mono", monospace; }
+.connector-status-card { display: flex; align-items: flex-start; gap: 12px; border: 1px solid var(--cyan); padding: 14px; color: var(--cyan); }
+.connector-status-card > span { display: grid; gap: 4px; }
+.connector-status-card strong { font: 700 9px "Space Mono", monospace; }
+.connector-status-card small { color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.connector-status-card.is-connected { border-color: var(--green); color: var(--green); }
 .proof-context { background: var(--surface); border: 1px solid var(--line); padding: 16px; display: grid; gap: 5px; margin-bottom: 24px; }
 .proof-context small, .proof-context span { font: 700 8px "Space Mono", monospace; color: var(--cyan); }
 .proof-context strong { font-family: "Space Mono", monospace; }
@@ -434,6 +456,8 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .evidence-entry-row { grid-template-columns: 1fr; }
   .connector-flow { flex-direction: column; }
   .connector-flow svg { transform: rotate(90deg); }
+  .connection-step { grid-template-columns: 1fr; }
+  .manual-setup dl > div { grid-template-columns: 1fr; }
   .source-feed-bar { align-items: flex-start; flex-direction: column; }
   .source-feed-bar > span:nth-child(2) { margin-left: 0; }
   .source-toolbar { grid-template-columns: 1fr; }

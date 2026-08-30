@@ -79,6 +79,7 @@ function App() {
   const [identityOpen, setIdentityOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
+  const [agentConnected, setAgentConnected] = useState(false);
   const [handoffStatus, setHandoffStatus] = useState("");
   const [proofOpen, setProofOpen] = useState(false);
   const [editingMission, setEditingMission] = useState(false);
@@ -126,6 +127,7 @@ function App() {
             setHandoffStatus("Agent event rejected: its DID does not match this identity.");
             continue;
           }
+          setAgentConnected(true);
           const eventStatus = await handleAgentEvent(event);
           if (eventStatus) setHandoffStatus(eventStatus);
           else if (event.event === "mission.selected") setHandoffStatus("Your agent received the mission and confirmed its finish line.");
@@ -144,6 +146,7 @@ function App() {
     if (pairing?.agentDid && pairing.agentDid !== connectedDid) {
       relayCursor.current = 0;
       setPairing(null);
+      setAgentConnected(false);
       sessionStorage.removeItem("agent-guild:active-pairing");
       setHandoffStatus("Identity changed. Create a fresh DID-bound pairing session.");
     }
@@ -165,6 +168,7 @@ function App() {
   function acceptPairing(value: RelayPairingFile) {
     relayCursor.current = 0;
     setPairing(value);
+    setAgentConnected(false);
     sessionStorage.setItem("agent-guild:active-pairing", exportRelayPairing(value));
     setHandoffStatus("Secure relay ready. Your agent can now receive encrypted missions.");
   }
@@ -503,7 +507,7 @@ function App() {
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} /> : null}
-      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => void handleAgentEvent(event)} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} agentConnected={agentConnected} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => { setAgentConnected(true); void handleAgentEvent(event); }} /> : null}
       {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
@@ -765,24 +769,18 @@ function IdentityModal({ identity, externalDid, onClose, onContinueConnector, on
   </Modal>;
 }
 
-function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; agentConnected: boolean; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [session, setSession] = useState<RelayPairingFile | null>(pairing);
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
-  const command = connectorPublished
-    ? "npx @agent-guild/connector@0.1.0-beta.1 pair-file ~/Downloads/agent-guild-pairing.json"
-    : "npm run connector -- pair-file ~/Downloads/agent-guild-pairing.json";
-  const [copied, setCopied] = useState(false);
+  const setupCommand = 'codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.1 pair-file "$HOME/Downloads/agent-guild-pairing.json"';
+  const checkMessage = "Use the Agent Guild guild_status tool to check my connection.";
+  const [copied, setCopied] = useState<"setup" | "check" | null>(null);
   const [envelope, setEnvelope] = useState("");
   const [status, setStatus] = useState("");
   const [provider, setProvider] = useState<"codex" | "claude" | "cursor" | "generic">("codex");
-  const providerCopy = {
-    codex: ["Open Codex MCP settings for this workspace.", "Add the Agent Guild connector as a local stdio MCP server.", "Start a new agent turn, then call guild_status."],
-    claude: ["Open your Claude MCP integrations or local configuration.", "Add the same local stdio connector command.", "Restart the client if it asks, then call guild_status."],
-    cursor: ["Open Cursor MCP settings for this project.", "Add the Agent Guild connector as a local stdio server.", "Enable it for the agent, then call guild_status."],
-    generic: ["Use any MCP client that supports local stdio servers.", "Set this command as the server process.", "Connect, then call guild_status to receive the mission."],
-  } as const;
+  const providerName = { codex: "Codex", claude: "Claude", cursor: "Cursor", generic: "your MCP client" }[provider];
 
   async function createSession() {
     if (!did || relayState === "preparing") return;
@@ -866,22 +864,63 @@ function ConnectorModal({ did, pairing, onPairingReady, onClose, onNeedIdentity,
   </Modal>;
 
   return <Modal title="CONNECT YOUR AGENT" onClose={onClose}>
-    <p className="modal-lead">Use the same local connector with Codex, Claude, Cursor, or any MCP client. It sends only allowlisted lifecycle events—not prompts, keys, environment values, or raw terminal output.</p>
-    <div className="connector-flow"><span>YOUR AGENT</span><ArrowRight /><span>LOCAL MCP CONNECTOR</span><ArrowRight /><span>AGENT GUILD</span></div>
-    <p className="panel-kicker">ONE-TIME ENCRYPTED PAIRING FILE</p>
-    <p className="fine-print">BOUND AGENT DID · <code>{shortDid(did)}</code></p>
-    <p className="fine-print">{sessionSource === "restored" ? "This existing session is active again. You do not need to download the file another time." : "The file contains a temporary session secret and expires in 24 hours. Agent Guild's edge receives only a public verification key and encrypted events."}</p>
-    {sessionSource !== "restored" ? <button className="button button-primary full" onClick={() => download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD PAIRING FILE</button> : null}
-    <p className="panel-kicker">LOCAL CONNECTOR COMMAND · NO SECRET IN THE COMMAND</p>
+    <p className="modal-lead">Connect in three small steps. Your AI stays where it already runs; Agent Guild receives only safe mission updates.</p>
+    <p className="panel-kicker">CHOOSE THE AI YOU USE</p>
     <div className="provider-tabs" role="tablist" aria-label="Agent provider"><button role="tab" aria-selected={provider === "codex"} onClick={() => setProvider("codex")}>CODEX</button><button role="tab" aria-selected={provider === "claude"} onClick={() => setProvider("claude")}>CLAUDE</button><button role="tab" aria-selected={provider === "cursor"} onClick={() => setProvider("cursor")}>CURSOR</button><button role="tab" aria-selected={provider === "generic"} onClick={() => setProvider("generic")}>GENERIC MCP</button></div>
-    <ol className="provider-steps">{providerCopy[provider].map((step) => <li key={step}>{step}</li>)}</ol>
-    <div className="command-box"><code>{command}</code><button onClick={() => { void navigator.clipboard.writeText(command); setCopied(true); }} aria-label="Copy pairing command">{copied ? <Check /> : <Clipboard />}</button></div>
+    <div className="connection-guide">
+      <section className="connection-step">
+        <span className="connection-step-number">01</span>
+        <div>
+          <p className="panel-kicker">DOWNLOAD</p>
+          <h3>Save your connection file.</h3>
+          <p>{sessionSource === "restored" ? "Your existing connection file is active again. You do not need to download it another time." : "Keep the downloaded JSON file in Downloads. It connects this DID for 24 hours and does not contain the DID private key."}</p>
+          <p className="fine-print">BOUND AGENT IDENTITY · <code>{shortDid(did)}</code></p>
+          {sessionSource !== "restored" ? <button className="button button-primary" onClick={() => download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD CONNECTION FILE</button> : <span className="step-complete"><Check size={15} /> CONNECTION FILE READY</span>}
+        </div>
+      </section>
+      <section className="connection-step">
+        <span className="connection-step-number">02</span>
+        <div>
+          <p className="panel-kicker">CONNECT</p>
+          <h3>Add Agent Guild to {providerName}.</h3>
+          {provider === "codex" && connectorPublished ? <>
+            <p>Open Terminal, paste this one line, and press Return. It adds Agent Guild to Codex for you.</p>
+            <div className="command-box"><code>{setupCommand}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommand); setCopied("setup"); }} aria-label="Copy Codex setup command">{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
+            <p className="fine-print">If you saved the connection file somewhere else, replace the file path before running the command.</p>
+          </> : provider === "codex" ? <div className="preview-setup">
+            <strong>PRIVATE BETA SETUP</strong>
+            <p>The public connector package is not released yet. This computer must have the Agent Guild project folder.</p>
+            <details className="manual-setup" open>
+              <summary>ENTER THESE FIELDS IN CODEX</summary>
+              <p>Open <b>Settings → Plugins → MCPs → Add</b>, choose <b>STDIO</b>, then enter:</p>
+              <dl>
+                <div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div>
+                <div><dt>START COMMAND</dt><dd><code>npm</code></dd></div>
+                <div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>run</code><code>connector</code><code>--</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div>
+                <div><dt>WORKING DIRECTORY</dt><dd><code>/FULL/PATH/TO/Flop-Friend</code></dd></div>
+                <div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div>
+              </dl>
+              <p className="fine-print">Use full paths beginning with <code>/Users/…</code>. Do not use <code>~</code> inside the Codex form.</p>
+            </details>
+          </div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>The one-click public connector is coming with the package release. Until then, use this tab only with a trusted local Agent Guild checkout.</p><details className="manual-setup"><summary>SHOW MANUAL SETUP</summary><p>Add a local STDIO server whose executable is <code>npm</code>. Pass <code>run</code>, <code>connector</code>, <code>--</code>, <code>pair-file</code>, and the connection file's full path as separate arguments.</p></details></div>}
+        </div>
+      </section>
+      <section className="connection-step">
+        <span className="connection-step-number">03</span>
+        <div>
+          <p className="panel-kicker">CHECK</p>
+          <h3>Restart {providerName}, then check once.</h3>
+          <p>Start a new agent turn and send this message. You do not need to understand the tool name.</p>
+          <div className="command-box"><code>{checkMessage}</code><button onClick={() => { void navigator.clipboard.writeText(checkMessage); setCopied("check"); }} aria-label="Copy connection check message">{copied === "check" ? <Check /> : <Clipboard />}</button></div>
+        </div>
+      </section>
+    </div>
     <div className="safety-list"><p><ShieldCheck /> Session events are AES-GCM encrypted.</p><p><LockKeyhole /> The connector has no general post-message tool.</p><p><Eye /> Public actions stop at approval.requested.</p></div>
-    <div className="connector-status">{relayState === "ready" ? `${sessionSource === "restored" ? "Existing" : "Secure"} relay ready. Missions and events arrive automatically.` : "Local preview has no edge relay. Paste the encrypted fallback envelope below."}</div>
+    <div className={`connector-status-card ${agentConnected ? "is-connected" : ""}`}>{agentConnected ? <><Check size={18} /><span><strong>AGENT CONNECTED</strong><small>Agent Guild received a safe lifecycle event from this DID.</small></span></> : <><Clock3 size={18} /><span><strong>{relayState === "ready" ? "WEBSITE READY · WAITING FOR YOUR AGENT" : "LOCAL PREVIEW · MANUAL RELAY"}</strong><small>{relayState === "ready" ? "Finish steps 2 and 3. This changes automatically after the first valid agent event." : "Paste the encrypted fallback envelope below."}</small></span></>}</div>
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">{connectorPublished ? "This pinned beta package is the same audited eight-tool connector." : "The installable package is built and tested but not public yet, so this preview uses the trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+    <p className="fine-print">{connectorPublished ? "This pinned beta package is the same audited eight-tool connector." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
   </Modal>;
 }
 
