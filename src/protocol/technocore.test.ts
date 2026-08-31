@@ -34,6 +34,10 @@ describe("Technocore protocol", () => {
     expect(() =>
       validateSignedMessage({ room: "general", from: worker, text: "hi\n", nonce: "1", sig: "x".repeat(86) }),
     ).toThrow(/already match/);
+    expect(() =>
+      validateSignedMessage({ room: "general", from: worker, text: "hi", nonce: "1", sig: "x".repeat(86) }),
+    ).toThrow(/canonical/);
+    expect(validateSignedMessage({ room: "general", from: worker, text: "hi", nonce: "1", sig: `${"x".repeat(85)}A` })).toMatchObject({ room: "general" });
   });
 
   it("matches read-back by DID nonce and exact normalized text", () => {

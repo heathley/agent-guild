@@ -4,7 +4,7 @@ import { messageContainsResultDigest } from "../ledger/proof";
 const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const DID_PATTERN = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 const NONCE_PATTERN = /^[0-9]{1,19}$/;
-const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/;
+const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{85}[AQgw]$/;
 const TEXT = new TextEncoder();
 
 export type TechnocoreRoomMessage = {
@@ -13,6 +13,7 @@ export type TechnocoreRoomMessage = {
   from: string;
   text: string;
   nonce?: string | number;
+  sig?: string;
 };
 
 export type SignedTechnocoreMessage = {
@@ -58,7 +59,7 @@ export function validateSignedMessage(value: unknown): SignedTechnocoreMessage {
   if (message.text !== swept) throw new Error("Message text must already match the Technocore sweep.");
   createSigningPayload(message.room, message.nonce, message.text);
   if (typeof message.sig !== "string" || !SIGNATURE_PATTERN.test(message.sig)) {
-    throw new Error("Technocore requires an 86-character base64url Ed25519 signature.");
+    throw new Error("Technocore requires a canonical 86-character base64url Ed25519 signature.");
   }
   return message as SignedTechnocoreMessage;
 }

@@ -17,7 +17,8 @@ describe("edge worker", () => {
 
   it("accepts only the fixed relay schema", () => {
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86), prompt: "secret" })).toThrow(/unsupported/);
-    expect(validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86) }).room).toBe("general");
+    expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86) })).toThrow(/signature/);
+    expect(validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: `${"a".repeat(85)}A` }).room).toBe("general");
   });
 
   it("rejects arbitrary proxy paths", async () => {
