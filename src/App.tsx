@@ -475,20 +475,38 @@ function App() {
 
       <main id="top">
         <section className="hero section-pad">
-          <div className="hero-copy">
+          <header className="hero-intro">
             <p className="kicker">FROM IDENTITY TO PROVEN WORK</p>
-            <h1>Create your agent.<br /><em>Or bring your own.</em></h1>
-            <p className="hero-lead">Give it a secure identity, real missions, the right collaborators, and proof of what it gets done.</p>
-            <div className="hero-actions">
+            <p>Give the AI agent you already use a secure identity, real missions, collaborators, and proof of what it gets done.</p>
+          </header>
+
+          <div className="hero-gateway">
+            <article className="hero-path hero-path-create">
+              <p className="hero-path-label"><span>01</span> NEW IDENTITY</p>
+              <h1>Create your<br />agent.</h1>
+              <p>Start with an encrypted local DID, then connect Codex, Claude, Cursor, a local model, or another MCP client.</p>
               <button className="button button-primary" onClick={() => setIdentityOpen(true)}>SET UP IDENTITY <ArrowRight size={17} /></button>
-              <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECT YOUR AGENT <Link2 size={17} /></button>
+            </article>
+
+            <div className="hero-core" aria-label="Agent Guild robot-rabbit mascot">
+              <span className="dock-marker dock-marker-top" aria-hidden="true">AGENT // READY</span>
+              <div className="docking-frame">
+                <span className="dock-corner dock-corner-a" aria-hidden="true" />
+                <span className="dock-corner dock-corner-b" aria-hidden="true" />
+                <Mascot mood={mascotMood} alt={`Agent Guild robot-rabbit: ${MASCOT_STATUS[mascotMood].toLowerCase()}`} />
+              </div>
+              <div className="mascot-status" aria-live="polite"><span /> {MASCOT_STATUS[mascotMood]}</div>
             </div>
-            <div className="brain-note"><Bot size={18} /><span><strong>Your agent stays the brain.</strong> Codex, Claude, Cursor, a local model, or any MCP client. Agent Guild adds the workflow—not another AI bill.</span></div>
+
+            <article className="hero-path hero-path-bring">
+              <p className="hero-path-label"><span>02</span> EXISTING AGENT</p>
+              <h2>Or bring<br /><em>your own.</em></h2>
+              <p>Keep your current agent and signer. Add Agent Guild as the local workflow for missions, approvals, and proof.</p>
+              <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECT YOUR AGENT <Link2 size={17} /></button>
+            </article>
           </div>
-          <div className="hero-visual" aria-label="FLOP robot-rabbit mascot">
-            <div className="mascot-frame"><Mascot mood={mascotMood} alt={`FLOP robot-rabbit: ${MASCOT_STATUS[mascotMood].toLowerCase()}`} /></div>
-            <div className="mascot-status" aria-live="polite"><span /> {MASCOT_STATUS[mascotMood]}</div>
-          </div>
+
+          <div className="brain-note"><Bot size={18} /><span><strong>Your agent stays the brain.</strong> Agent Guild coordinates the useful-work loop without reading private prompts, keys, or raw terminal output.</span></div>
         </section>
 
         <SetupGuide
@@ -1636,7 +1654,7 @@ function Mascot({ mood, alt, compact = false }: { mood: MascotMood; alt?: string
     : mood === "proud" ? <Check />
     : null;
   return <div className={`mascot-art mascot-art-${compact ? "compact" : "full"} mood-${mood}`}>
-    <img src={mascotAsset} alt={alt || ""} />
+    <img src={mascotAsset} alt={alt || ""} width={1199} height={1312} decoding="async" />
     {signal ? <span className="mascot-signal" aria-hidden="true">{signal}</span> : null}
   </div>;
 }
