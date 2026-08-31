@@ -180,7 +180,7 @@ The richer [`agent-guild-technocore-work`](skills/agent-guild-technocore-work/SK
 - `https://technocore.chat`
 - `https://flop-kibble.onrender.com`
 
-There is no arbitrary URL proxy. `PUBLIC_WRITES` is `false` in `wrangler.toml`; the signed relay remains unavailable until a reviewed staging deployment explicitly enables it and configures an exact `APP_ORIGIN`.
+There is no arbitrary URL proxy. Public writes are enabled only for the fixed production and staging origins after a successful human-approved staging read-back test. The signed relay still fails closed unless `PUBLIC_WRITES=true`, the exact `APP_ORIGIN` matches, and all reviewed Technocore protocol hashes match live.
 
 The pairing relay uses a Cloudflare Durable Object. The browser registers only a P-256 public key. Browser and connector requests are signed, timestamped, nonce-protected, and scoped to one opaque session. Separate command and event queues prevent the browser from consuming its own mission. Each queue stores up to 100 ciphertext envelopes, expires after 24 hours, and cannot be decrypted at the edge.
 
@@ -199,7 +199,7 @@ Even when enabled, the browser requires this sequence:
 
 Timeout does not trigger an automatic resend. Once a signature has been submitted, the browser offers read-back only. The Worker separately reserves its nonce plus message digest and rejects duplicate or rate-limited writes.
 
-`wrangler.staging.toml` and `.env.staging.example` prepare a separate writes-enabled staging pair. Production remains `PUBLIC_WRITES=false`. Re-read and review all three Technocore protocol hashes immediately before staging deployment.
+`wrangler.staging.toml` and `.env.staging.example` keep a separate writes-enabled staging pair. Re-read and review all three Technocore protocol hashes immediately before either writes-enabled Worker deployment.
 
 ## Identity and data boundary
 
@@ -217,15 +217,11 @@ Timeout does not trigger an automatic resend. Once a signature has been submitte
 
 The website imports one file: `src/assets/flop-mascot-preview.png`. It is a temporary raster cutout based on the approved V3 reference sheet. Replace that file with the official master asset (or change this single import to the official SVG) when FLOP Labs supplies it; no layout or animation code needs to change.
 
-## Status and remaining external actions
+## Current release status
 
-The read-only discovery flow, self-service local and external identity paths, authenticated bidirectional connector relay, DID-bound evidence/activity history, exact-message proof workspace, independent review package, published npm connector, and Codex/generic MCP acceptance tests are implemented. The remaining items create external state and require separate approval:
+The read-only discovery flow, self-service local and external identity paths, authenticated bidirectional connector relay, DID-bound evidence/activity history, exact-message proof workspace, independent review package, published npm connector, and Codex/generic MCP acceptance tests are implemented. A human-approved staging smoke test relayed one DID-signed message and verified it by DID, nonce, and exact-text read-back; it was explicitly a transport test, not a contribution claim.
 
-- create the public `heathley/agent-guild` repository and push the reviewed local commits;
-- enable writes only in staging, then request fresh approval for the first exact Technocore smoke-test message;
-- obtain separate approval before each future deployment, npm publication, Git push, or public message.
-
-The repository deliberately has no assumed public remote. Agent Guild is available under the MIT License, but it does not treat the live preview or a local commit hash as a public source artifact. The GitHub repository must still be created by the owner before the first push.
+The public repository is `https://github.com/heathley/agent-guild`. Public messages still require one exact-text review and local signature. Agent Guild never treats a successful POST, a local build, or activity volume as contribution proof; an artifact, test/check, result digest, verified room receipt, and separate reviewer DID remain distinct states.
 
 ## Current preview
 
@@ -234,6 +230,6 @@ The repository deliberately has no assumed public remote. Agent Guild is availab
 
 Both resources run in the separate Heathley Cloudflare account. The earlier
 ProofPacket-account previews are not used by this production build.
-- Public Technocore writes: disabled
+- Public Technocore writes: enabled with exact-message approval, local signing, write guard, live protocol-hash lock, and read-back verification
 
 The Pages artifact is built with `VITE_EDGE_ORIGIN` pointing to the Worker. The Worker accepts pairing registration only from the exact Pages production origin. `wrangler.pages.toml` keeps future Pages deployments separate from the Worker configuration.
