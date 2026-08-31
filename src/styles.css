@@ -36,6 +36,10 @@ code { font-family: "Space Mono", monospace; overflow-wrap: anywhere; }
 .site-header nav { display: flex; align-items: center; gap: 32px; }
 .site-header nav a { font-size: 11px; color: var(--secondary); letter-spacing: .08em; }
 .site-header nav a:hover { color: var(--ice); }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.source-link { min-height: 36px; padding: 0 11px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); color: var(--secondary); font: 700 9px "Space Mono", monospace; letter-spacing: .04em; }
+.source-link:hover { border-color: var(--cyan); color: var(--cyan); }
+.source-link svg:last-child { color: var(--cyan); }
 
 .button { min-height: 44px; border: 1px solid var(--line); border-radius: 2px; padding: 0 18px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; background: transparent; cursor: pointer; font-family: "Space Mono", monospace; font-size: 11px; font-weight: 700; letter-spacing: .04em; transition: background .16s, border-color .16s, color .16s, transform .16s; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -284,6 +288,9 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .app-shell > footer span { font-weight: 700; }
 .app-shell > footer p { margin: 0; color: var(--secondary); font-size: 12px; }
 .app-shell > footer small { color: var(--cyan); font-size: 8px; }
+.footer-meta { display: grid; justify-items: end; gap: 9px; }
+.footer-meta a { display: inline-flex; align-items: center; gap: 6px; color: var(--secondary); font: 700 8px "Space Mono", monospace; letter-spacing: .05em; }
+.footer-meta a:hover { color: var(--cyan); }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(3,7,17,.82); display: grid; place-items: center; padding: 20px; overflow-y: auto; }
 .modal { width: min(680px, 100%); max-height: calc(100vh - 40px); background: var(--base); border: 1px solid var(--line); border-top: 3px solid var(--cyan); overflow-y: auto; }
@@ -490,6 +497,14 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .activity-success-heading span { display: grid; gap: 4px; }
 .activity-success-heading strong { color: var(--green); font: 700 11px "Space Mono", monospace; }
 .activity-success-heading small { color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.proof-share-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px; border: 1px solid var(--line); background: var(--base); }
+.proof-share-card > div { display: flex; align-items: flex-start; gap: 11px; }
+.proof-share-card > div > svg { flex: none; color: var(--green); }
+.proof-share-card span { display: grid; gap: 4px; }
+.proof-share-card strong { color: var(--ice); font: 700 10px "Space Mono", monospace; }
+.proof-share-card small { max-width: 520px; color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.proof-share-card.is-reviewed { border-color: color-mix(in srgb, var(--green) 55%, var(--line)); }
+.proof-share-card .button { flex: none; }
 .activity-receipt { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--line); }
 .activity-receipt > div { min-width: 0; padding: 10px 12px; background: var(--base); }
 .activity-receipt dt { color: var(--green); font: 700 8px "Space Mono", monospace; letter-spacing: .08em; }
@@ -624,6 +639,7 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .proof-rail article:nth-child(2) { border-right: 0; }
   .proof-rail article:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .app-shell > footer { grid-template-columns: 1fr; gap: 8px; }
+  .footer-meta { justify-items: start; }
   .mission-draft { grid-template-columns: 1fr 1fr; }
   .mission-draft > div { grid-column: 1 / -1; }
   .kibble-snapshot { grid-template-columns: 1fr 1fr; }
@@ -636,6 +652,8 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .brand small { display: none; }
   .button-quiet { font-size: 0; }
   .button-quiet svg { width: 18px; }
+  .source-link span, .source-link svg:last-child { display: none; }
+  .source-link { width: 38px; padding: 0; justify-content: center; }
   .section-pad { padding: 64px 18px; }
   .hero { min-height: 0; gap: 24px; padding-top: 48px; }
   .hero-intro { text-align: left; }
@@ -683,6 +701,8 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .mission-draft .button { grid-column: 1; }
   .discovery-controls fieldset { grid-template-columns: 1fr; }
   .activity-desk { align-items: stretch; flex-direction: column; }
+  .proof-share-card { align-items: stretch; flex-direction: column; }
+  .proof-share-card .button { width: 100%; }
   .public-activity-list article { grid-template-columns: 1fr; }
   .activity-receipt, .activity-receipt.is-compact { grid-template-columns: 1fr; }
   .activity-receipt .receipt-hash, .activity-receipt.is-compact .receipt-hash { grid-column: 1; }

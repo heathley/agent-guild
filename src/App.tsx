@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, Eye, FileCheck2,
-  History, KeyRound, Link2, LockKeyhole, MessageCircleQuestion, MessageSquareText, Pencil, Radio, RefreshCw, Search, Send, ShieldCheck,
+  ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, ExternalLink, Eye, FileCheck2,
+  Github, History, KeyRound, Link2, LockKeyhole, MessageCircleQuestion, MessageSquareText, Pencil, Radio, RefreshCw, Search, Send, Share2, ShieldCheck,
   Sparkles, Users, X,
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
@@ -30,6 +30,7 @@ import { recordActivityFromEvent } from "./ledger/activity";
 import { bindResultDigest, createEvidenceBundleDigest, summarizeProofEvidence } from "./ledger/proof";
 import { loadPublicActivity, savePublicActivity, splitPublicActivity } from "./ledger/publicActivity";
 import type { AgentActivity, LedgerEntry, Mission, ProofState, PublicActivityRecord, Receipt } from "./protocol/models";
+import { buildVerifiedXShareText, buildXIntentUrl } from "./sharing/x";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
   nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
@@ -468,9 +469,12 @@ function App() {
         <nav aria-label="Main navigation">
           <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#activity">ACTIVITY</a><a href="#proof">PROOF</a>
         </nav>
-        <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
-          <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
-        </button>
+        <div className="header-actions">
+          <a className="source-link" href="https://github.com/heathley/agent-guild" target="_blank" rel="noopener noreferrer" aria-label="View Agent Guild source code on GitHub"><Github size={17} /><span>VIEW SOURCE</span><ExternalLink size={12} /></a>
+          <button className="button button-quiet" onClick={() => setIdentityOpen(true)}>
+            <KeyRound size={16} /> {connectedDid ? shortDid(connectedDid) : "IDENTITY"}
+          </button>
+        </div>
       </header>
 
       <main id="top">
@@ -654,7 +658,7 @@ function App() {
         </section>
       </main>
 
-      <footer><span>AGENT GUILD</span><p>Mission control for Technocore agents · Built around FLOP Labs' open agent workflow</p><small>NO ACCOUNTS · LOCAL-FIRST · HUMAN-APPROVED PUBLIC ACTIONS</small></footer>
+      <footer><span>AGENT GUILD</span><p>Mission control for Technocore agents · Built around FLOP Labs' open agent workflow</p><div className="footer-meta"><small>NO ACCOUNTS · LOCAL-FIRST · HUMAN-APPROVED PUBLIC ACTIONS</small><a href="https://github.com/heathley/agent-guild" target="_blank" rel="noopener noreferrer"><Github size={14} /> GITHUB REPOSITORY <ExternalLink size={11} /></a></div></footer>
 
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} onReply={(seq) => { setPendingAction({ kind: "reply", room: inspectingRoom.room, exactText: "", replyToSeq: seq }); setInspectingRoom(null); setActivityOpen(true); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
@@ -1518,6 +1522,18 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
     return `Independent review requested\nMission: ${mission.title}\nWorker DID: ${did}\nResult hash: ${targetHash}${kibbleLine}\nSign exactly: ${targetHash}|${did}|${mission.id}`;
   }
 
+  function shareOnXUrl() {
+    if (!mission || !entry?.receipt || !receiptMatchesCurrentEvidence) return "";
+    const artifactUrl = entry.commitUrl || entry.artifactUrl || entry.evidence?.find((item) => item.kind === "commit" && item.publicUrl)?.publicUrl;
+    return buildXIntentUrl(buildVerifiedXShareText({
+      title: mission.title,
+      room: entry.receipt.room,
+      seq: entry.receipt.seq,
+      reviewed: entry.state === "reviewed" && Boolean(entry.review),
+      artifactUrl,
+    }));
+  }
+
   const receiptMatchesCurrentEvidence = Boolean(entry?.receipt?.resultHash && resultHash && entry.receipt.resultHash === resultHash &&
     (mission?.source !== "kibble-community" || entry.kibble?.boardResultHash && entry.kibble.boardResultVerifiedAt));
 
@@ -1560,6 +1576,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
       <div className="receipt-stage proof-stage-card">
         <div className="proof-stage-heading"><span>02</span><div><p className="panel-kicker">VERIFY THE PUBLIC RECEIPT</p><h3>Agent Guild reads the room back.</h3><p>Verification requires the same DID, nonce, exact text, and automatic result digest. A successful POST alone is never proof.</p></div></div>
         {receiptMatchesCurrentEvidence ? <div className="signed-ready"><ShieldCheck /><span><strong>Public receipt verified for this evidence.</strong><small>#{entry!.receipt!.room} · sequence {entry!.receipt!.seq} · {entry!.receipt!.resultHash}</small></span></div> : <div className="write-lock"><Clock3 /><span><strong>{entry?.receipt ? "Evidence changed after the last receipt." : "No verified public receipt yet."}</strong><small>{entry?.receipt ? "Prepare and verify a new public result for the current digest. The earlier receipt does not unlock review." : "This remains locked until one approved publication is found by read-back. Agent Guild never retries automatically."}</small></span></div>}
+        {receiptMatchesCurrentEvidence ? <div className={`proof-share-card ${entry?.state === "reviewed" && entry.review ? "is-reviewed" : ""}`}><div><Share2 /><span><strong>{entry?.state === "reviewed" && entry.review ? "Share independently reviewed work." : "Share this verified result."}</strong><small>X opens with editable text plus the public artifact and Technocore receipt. Nothing is posted automatically.</small></span></div><a className="button button-secondary" href={shareOnXUrl()} target="_blank" rel="noopener noreferrer">{entry?.state === "reviewed" && entry.review ? "SHARE REVIEWED WORK ON X" : "SHARE VERIFIED RESULT ON X"}<ExternalLink size={13} /></a></div> : null}
       </div>
       <div className="review-form proof-stage-card">
         <div className="proof-stage-heading"><span>03</span><div><p className="panel-kicker">INDEPENDENT REVIEW</p><h3>A different identity checks the same result.</h3><p>This step stays locked until the public receipt is verified.</p></div></div>
