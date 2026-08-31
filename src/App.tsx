@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
 import {
-  createRelayPairing, decryptRelayedEvent, exportRelayPairing, parseRelayPairing,
+  createRelayPairing, decryptRelayedEvent, exportRelayPairing, pairingFileName, parseRelayPairing,
   pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
@@ -948,10 +948,13 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   const [session, setSession] = useState<RelayPairingFile | null>(pairing);
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
-  const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED === "true";
+  const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED !== "false";
   const connectorPackage = "@agent-guild/connector@0.1.0-beta.3";
-  const pairingHomePath = "$HOME/.agent-guild/agent-guild-pairing.json";
-  const movePairingCommand = `mkdir -p "$HOME/.agent-guild" && mv "$HOME/Downloads/agent-guild-pairing.json" "${pairingHomePath}" && chmod 600 "${pairingHomePath}"`;
+  const pairingDownloadName = session ? pairingFileName(session.sessionId) : "agent-guild-pairing.json";
+  const pairingHomePath = `$HOME/.agent-guild/${pairingDownloadName}`;
+  const movePairingCommand = `mkdir -p "$HOME/.agent-guild"
+mv -i "$HOME/Downloads/${pairingDownloadName}" "${pairingHomePath}"
+chmod 600 "${pairingHomePath}"`;
   const setupCommands = {
     codex: `codex mcp add agent-guild -- npx -y ${connectorPackage} pair-file "${pairingHomePath}"`,
     claude: `claude mcp add --transport stdio agent-guild -- npx -y ${connectorPackage} pair-file "${pairingHomePath}"`,
@@ -961,7 +964,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
     "agent-guild": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "${connectorPackage}", "pair-file", "\${userHome}/.agent-guild/agent-guild-pairing.json"]
+      "args": ["-y", "${connectorPackage}", "pair-file", "\${userHome}/.agent-guild/${pairingDownloadName}"]
     }
   }
 }`;
@@ -1068,10 +1071,10 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
         <div>
           <p className="panel-kicker">DOWNLOAD</p>
           <h3>Save it once. Move it somewhere safe.</h3>
-          <p>{sessionSource === "restored" ? "Your existing connection file is active again. Keep using the same local file; do not download another copy." : "Download the temporary connection file once. On macOS, Downloads may be blocked from Codex or Cursor, so move the file before connecting."}</p>
+          <p>{sessionSource === "restored" ? "Your existing connection file is active again. Keep using the same local file; do not download another copy." : "Download the temporary connection file once. Its session-specific name prevents it from replacing an older agent connection."}</p>
           <p className="fine-print">BOUND AGENT IDENTITY · <code>{shortDid(did)}</code></p>
-          {sessionSource !== "restored" ? <button className="button button-primary" onClick={() => download("agent-guild-pairing.json", exportRelayPairing(session))}>DOWNLOAD CONNECTION FILE</button> : <span className="step-complete"><Check size={15} /> CONNECTION FILE READY</span>}
-          {sessionSource !== "restored" ? <div className="safe-file-step"><strong>AFTER DOWNLOADING · COPY AND RUN IN TERMINAL</strong><p>This moves the file to a private app folder and limits it to your macOS user. It does not reveal or upload the file.</p><div className="command-box"><code>{movePairingCommand}</code><button onClick={() => { void navigator.clipboard.writeText(movePairingCommand); setCopied("move"); }} aria-label="Copy safe connection file move command">{copied === "move" ? <Check /> : <Clipboard />}</button></div></div> : <p className="fine-print safe-location-reminder"><ShieldCheck size={14} /> If your file is still in Downloads, move it to <code>~/.agent-guild/agent-guild-pairing.json</code> before continuing.</p>}
+          {sessionSource !== "restored" ? <button className="button button-primary" onClick={() => download(pairingDownloadName, exportRelayPairing(session))}>DOWNLOAD CONNECTION FILE</button> : <span className="step-complete"><Check size={15} /> CONNECTION FILE READY</span>}
+          {sessionSource !== "restored" ? <div className="safe-file-step"><strong>AFTER DOWNLOADING · COPY AND RUN IN TERMINAL</strong><p>This command expects <code>{pairingDownloadName}</code> in Downloads, moves it to a private app folder, and limits it to your macOS user. <code>mv -i</code> refuses to replace an older file without asking.</p><div className="command-box"><code>{movePairingCommand}</code><button onClick={() => { void navigator.clipboard.writeText(movePairingCommand); setCopied("move"); }} aria-label="Copy safe connection file move command">{copied === "move" ? <Check /> : <Clipboard />}</button></div><details className="manual-setup"><summary>FILE NOT FOUND?</summary><p>Your browser may use Desktop, another folder, or add <code>(1)</code> after a repeated download. Open the browser's Downloads list, find <code>{pairingDownloadName}</code>, and replace only the first path in the move command with its real location. Never overwrite another pairing file.</p><p className="fine-print">On macOS, press <code>⌘ + Shift + J</code> in Chrome to open Downloads.</p></details></div> : <p className="fine-print safe-location-reminder"><ShieldCheck size={14} /> Keep using the exact local path of the restored connection file. Do not replace another agent's pairing file.</p>}
         </div>
       </section>
       <section className="connection-step">
@@ -1083,7 +1086,7 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
             <p>Open Terminal, paste this one line, and press Return. It adds the local Agent Guild connector to {providerName}.</p>
             <div className="command-box"><code>{setupCommands[provider]}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommands[provider]); setCopied("setup"); }} aria-label={`Copy ${providerName} setup command`}>{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
             <p className="fine-print">This command expects the safe location from step 1. It works with {provider === "claude" ? "Claude Code on this computer—not Claude on the web or the Claude chat app" : "Codex on this computer"}.</p>
-            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
+            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
           </> : connectorPublished && provider === "cursor" ? <div className="preview-setup cursor-setup"><strong>CURSOR · LOCAL STDIO</strong><p>Open <b>Cursor Settings → Tools & MCP → New MCP Server</b>. Add this configuration to <code>~/.cursor/mcp.json</code>, save it, then restart Cursor.</p><div className="command-box"><code>{cursorConfig}</code><button onClick={() => { void navigator.clipboard.writeText(cursorConfig); setCopied("config"); }} aria-label="Copy Cursor MCP configuration">{copied === "config" ? <Check /> : <Clipboard />}</button></div><p className="fine-print">Cursor launches this local process itself. The <code>{'${userHome}'}</code> value points to the safe folder from step 1; no manual path replacement is needed.</p></div> : provider === "codex" ? <div className="preview-setup">
             <strong>PRIVATE BETA SETUP</strong>
             <p>The public connector package is not released yet. This computer must have the Agent Guild project folder.</p>
@@ -1093,13 +1096,13 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
               <dl>
                 <div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div>
                 <div><dt>START COMMAND</dt><dd><code>npm</code></dd></div>
-                <div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>run</code><code>connector</code><code>--</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div>
+                <div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>run</code><code>connector</code><code>--</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div>
                 <div><dt>WORKING DIRECTORY</dt><dd><code>/FULL/PATH/TO/Flop-Friend</code></dd></div>
                 <div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div>
               </dl>
               <p className="fine-print">Use full paths beginning with <code>/Users/…</code>. Do not use <code>~</code> inside the Codex form.</p>
             </details>
-          </div> : provider === "generic" && connectorPublished ? <div className="preview-setup"><strong>LOCAL STDIO MCP</strong><p>Use these fields in any MCP client that can start a local STDIO server. Remote-only clients cannot read a pairing file from this computer.</p><details className="manual-setup" open><summary>ENTER THESE FIELDS</summary><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/agent-guild-pairing.json</code></dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Use a full path beginning with <code>/Users/…</code> in GUI fields. Do not paste the whole command into one argument box.</p></details></div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>This preview requires a trusted local Agent Guild checkout. The public package is not enabled in this build.</p></div>}
+          </div> : provider === "generic" && connectorPublished ? <div className="preview-setup"><strong>LOCAL STDIO MCP</strong><p>Use these fields in any MCP client that can start a local STDIO server. Remote-only clients cannot read a pairing file from this computer.</p><details className="manual-setup" open><summary>ENTER THESE FIELDS</summary><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Use a full path beginning with <code>/Users/…</code> in GUI fields. Do not paste the whole command into one argument box.</p></details></div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>This preview requires a trusted local Agent Guild checkout. The public package is not enabled in this build.</p></div>}
         </div>
       </section>
       <section className="connection-step">

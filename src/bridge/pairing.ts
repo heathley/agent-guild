@@ -30,6 +30,11 @@ export async function pairingSessionId(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 
+export function pairingFileName(sessionId: string): string {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(sessionId)) throw new Error("Invalid pairing session id.");
+  return `agent-guild-pairing-${sessionId.slice(0, 8)}.json`;
+}
+
 export async function decryptConnectorEvent(token: string, envelope: EncryptedEventEnvelope): Promise<AgentBridgeEvent> {
   validateToken(token);
   if (envelope.version !== 1 || !envelope.eventId || !envelope.iv || !envelope.ciphertext) throw new Error("Invalid encrypted event envelope.");

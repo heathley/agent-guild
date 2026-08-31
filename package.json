@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:production": "VITE_EDGE_ORIGIN=https://agent-guild-edge.agent-guild.workers.dev VITE_CONNECTOR_PUBLISHED=true npm run build",
     "test": "vitest run",
     "typecheck:connector": "tsc -p tsconfig.connector.json",
     "build:connector-package": "tsc -p tsconfig.connector.build.json",

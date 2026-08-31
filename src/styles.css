@@ -418,7 +418,7 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .manual-setup dd { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; color: var(--ice); font-size: 11px; }
 .manual-setup dd code { border: 1px solid var(--line); padding: 3px 6px; background: var(--surface); white-space: normal; overflow-wrap: anywhere; }
 .command-box { border: 1px solid var(--line); background: var(--surface); display: flex; align-items: stretch; }
-.command-box code { flex: 1; padding: 14px; font-size: 10px; overflow-x: auto; white-space: normal; overflow-wrap: anywhere; }
+.command-box code { flex: 1; padding: 14px; font-size: 10px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .command-box button { width: 48px; border: 0; border-left: 1px solid var(--line); background: var(--surface-light); color: var(--cyan); cursor: pointer; }
 .safety-list { margin: 20px 0; display: grid; gap: 10px; }
 .safety-list p { margin: 0; display: flex; gap: 10px; align-items: center; color: var(--secondary); font-size: 12px; }
