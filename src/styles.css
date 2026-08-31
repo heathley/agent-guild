@@ -464,6 +464,19 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .signed-ready svg { color: var(--green); }
 .signed-ready span, .write-lock span { display: grid; gap: 3px; }
 .signed-ready small, .write-lock small { color: var(--secondary); }
+.activity-success { display: grid; gap: 15px; border: 1px solid var(--green); background: rgba(50, 215, 75, .05); padding: 16px; }
+.activity-success-heading { display: flex; align-items: flex-start; gap: 12px; }
+.activity-success-heading > svg { width: 20px; flex: none; color: var(--green); }
+.activity-success-heading span { display: grid; gap: 4px; }
+.activity-success-heading strong { color: var(--green); font: 700 11px "Space Mono", monospace; }
+.activity-success-heading small { color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.activity-receipt { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--line); }
+.activity-receipt > div { min-width: 0; padding: 10px 12px; background: var(--base); }
+.activity-receipt dt { color: var(--green); font: 700 8px "Space Mono", monospace; letter-spacing: .08em; }
+.activity-receipt dd { margin: 5px 0 0; color: var(--ice); font: 700 9px "Space Mono", monospace; line-height: 1.45; overflow-wrap: anywhere; }
+.activity-receipt .receipt-hash { grid-column: 1 / -1; }
+.activity-receipt.is-compact { margin-top: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.activity-receipt.is-compact .receipt-hash { grid-column: 1 / -1; }
 .write-lock { border-color: var(--line); background: var(--surface); }
 .write-lock svg { color: var(--cyan); }
 .readback-retry { border: 1px solid rgba(0, 180, 216, .55); background: rgba(0, 180, 216, .06); padding: 16px; }
@@ -515,9 +528,19 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .public-activity-list strong { font: 700 10px "Space Mono", monospace; }
 .public-activity-list p { margin: 7px 0; color: var(--secondary); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
 .public-activity-list small { color: var(--secondary); font: 700 8px "Space Mono", monospace; }
+.public-activity-list article.is-compact { background: var(--base); }
 .activity-state { align-self: start; padding: 5px 7px; border: 1px solid var(--line); color: var(--secondary); text-align: center; font: 700 8px "Space Mono", monospace; }
 .activity-state.state-prepared { border-color: var(--cyan); color: var(--cyan); }
+.activity-state.state-published { border-color: var(--cyan); color: var(--cyan); }
 .activity-state.state-verified { border-color: var(--green); color: var(--green); }
+.activity-history { margin-top: 16px; border: 1px solid var(--line); background: var(--surface); }
+.activity-history > summary { min-height: 46px; padding: 13px 15px; display: flex; align-items: center; gap: 9px; color: var(--secondary); cursor: pointer; list-style: none; font: 700 9px "Space Mono", monospace; }
+.activity-history > summary::-webkit-details-marker { display: none; }
+.activity-history > summary::after { content: "+"; margin-left: auto; color: var(--cyan); font-size: 15px; }
+.activity-history[open] > summary::after { content: "−"; }
+.activity-history > summary svg { color: var(--cyan); }
+.activity-history > p { margin: 0; padding: 0 15px 14px; color: var(--secondary); font-size: 10px; line-height: 1.55; }
+.activity-history-list { margin: 0; border-top: 1px solid var(--line); }
 .activity-explainer { display: flex; align-items: flex-start; gap: 13px; margin-bottom: 16px; padding: 16px; border-left: 3px solid var(--cyan); background: var(--surface); }
 .activity-explainer svg { color: var(--cyan); flex: none; }
 .activity-explainer strong { font: 700 12px "Space Mono", monospace; }
@@ -620,6 +643,8 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .discovery-controls fieldset { grid-template-columns: 1fr; }
   .activity-desk { align-items: stretch; flex-direction: column; }
   .public-activity-list article { grid-template-columns: 1fr; }
+  .activity-receipt, .activity-receipt.is-compact { grid-template-columns: 1fr; }
+  .activity-receipt .receipt-hash, .activity-receipt.is-compact .receipt-hash { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

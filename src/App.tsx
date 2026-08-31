@@ -28,8 +28,8 @@ import { exportEncryptedLedger, importEncryptedLedger, loadLedger, saveLedger } 
 import { attachEvidenceFromEvent, attachManualEvidence } from "./ledger/evidence";
 import { recordActivityFromEvent } from "./ledger/activity";
 import { bindResultDigest, createEvidenceBundleDigest, summarizeProofEvidence } from "./ledger/proof";
-import { loadPublicActivity, savePublicActivity } from "./ledger/publicActivity";
-import type { AgentActivity, LedgerEntry, Mission, ProofState, PublicActivityRecord } from "./protocol/models";
+import { loadPublicActivity, savePublicActivity, splitPublicActivity } from "./ledger/publicActivity";
+import type { AgentActivity, LedgerEntry, Mission, ProofState, PublicActivityRecord, Receipt } from "./protocol/models";
 import {
   createReceipt, createSigningPayload, findPublishedMessage, isIndependentReview,
   nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
@@ -125,6 +125,7 @@ function App() {
   const connectedDid = identity?.did || externalDid || null;
   const currentEntry = activeMission ? ledger.find((entry) => entry.mission.id === activeMission.id) : undefined;
   const proofState = currentEntry?.state || "planned";
+  const activityGroups = useMemo(() => splitPublicActivity(publicActivity), [publicActivity]);
 
   useEffect(() => {
     void loadLocalIdentity().then(setIdentity).catch(() => undefined);
@@ -613,7 +614,8 @@ function App() {
             <div><MessageCircleQuestion size={24} /><span><strong>ACTIVITY DESK</strong><small>Draft a relevant room message yourself, or review one prepared by your agent. Every message stops at exact-text approval.</small></span></div>
             <button className="button button-primary" onClick={() => { setPendingAction(null); setActivityOpen(true); }}><Send size={16} /> OPEN ACTIVITY DESK</button>
           </div>
-          {publicActivity.length ? <div className="public-activity-list">{[...publicActivity].reverse().slice(0, 12).map((item) => <article key={item.id}><span className={`activity-state state-${item.state}`}>{item.state.toUpperCase()}</span><div><strong>{item.kind.toUpperCase()} · #{item.room}</strong><p>{item.exactText}</p><small>{formatCheckedAt(item.createdAt)}{item.replyToSeq !== undefined ? ` · RE #${item.replyToSeq}` : ""}</small></div></article>)}</div> : <EmptyState icon={<MessageSquareText />} title="No public activity prepared yet" detail="This is normal. Open Activity Desk when your agent has something relevant to say or respond to." />}
+          {activityGroups.visible.length ? <div className="public-activity-list">{[...activityGroups.visible].reverse().slice(0, 12).map((item) => <PublicActivityCard key={item.id} item={item} />)}</div> : <EmptyState icon={<MessageSquareText />} title="No public activity published yet" detail="Prepared drafts stay private and appear in history below. A message appears here only after a publish attempt reaches Technocore." />}
+          {activityGroups.prepared.length ? <details className="activity-history"><summary><History size={16} /> PREPARED HISTORY · {activityGroups.prepared.length}</summary><p>Local drafts and stopped attempts. Nothing in this section is presented as public activity.</p><div className="public-activity-list activity-history-list">{[...activityGroups.prepared].reverse().slice(0, 20).map((item) => <PublicActivityCard key={item.id} item={item} compact />)}</div></details> : null}
         </section>
 
         <section id="proof" className="proof-section section-pad">
@@ -1101,6 +1103,28 @@ function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose,
   </Modal>;
 }
 
+function ActivityReceiptSummary({ receipt, compact = false }: { receipt: Receipt; compact?: boolean }) {
+  return <dl className={`activity-receipt ${compact ? "is-compact" : ""}`} aria-label="Verified Technocore receipt">
+    <div><dt>ROOM</dt><dd>#{receipt.room} · SEQ {receipt.seq}</dd></div>
+    <div><dt>SERVER TIME</dt><dd>{formatCheckedAt(receipt.serverTimestamp)}</dd></div>
+    <div><dt>DID</dt><dd title={receipt.did}>{shortPublicDid(receipt.did)}</dd></div>
+    <div><dt>NONCE</dt><dd>{receipt.nonce}</dd></div>
+    <div className="receipt-hash"><dt>TEXT HASH</dt><dd>sha256:{receipt.textSha256}</dd></div>
+  </dl>;
+}
+
+function PublicActivityCard({ item, compact = false }: { item: PublicActivityRecord; compact?: boolean }) {
+  return <article className={compact ? "is-compact" : ""}>
+    <span className={`activity-state state-${item.state}`}>{item.state.toUpperCase()}</span>
+    <div>
+      <strong>{item.kind.toUpperCase()} · #{item.room}</strong>
+      <p>{item.exactText}</p>
+      <small>{formatCheckedAt(item.createdAt)}{item.replyToSeq !== undefined ? ` · RE #${item.replyToSeq}` : ""}</small>
+      {item.state === "verified" && item.receipt ? <ActivityReceiptSummary receipt={item.receipt} compact /> : null}
+    </div>
+  </article>;
+}
+
 function ActivityModal({ did, identity, rooms, initial, records, onRecords, onClose }: { did: string | null; identity: EncryptedIdentity | null; rooms: PublicRoom[]; initial: PublicActionDraft | null; records: PublicActivityRecord[]; onRecords: (records: PublicActivityRecord[]) => void; onClose: () => void }) {
   const [kind, setKind] = useState<PublicActivityRecord["kind"]>(initial?.kind || "reply");
   const [room, setRoom] = useState(initial?.room || "");
@@ -1111,9 +1135,14 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   const [externalSignature, setExternalSignature] = useState("");
   const [finalConfirm, setFinalConfirm] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isCheckingReadback, setIsCheckingReadback] = useState(false);
   const [error, setError] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
   const roomChoices = useMemo(() => [...new Set([...rooms.map((item) => item.room), ...(initial?.room ? [initial.room] : [])])].sort(), [rooms, initial?.room]);
+  const currentRecord = dry ? records.find((item) => item.id === dry.id) : undefined;
+  const isVerified = currentRecord?.state === "verified" && Boolean(currentRecord.receipt);
+  const reachedTechnocore = currentRecord?.state === "published" || isVerified;
 
   function upsert(record: PublicActivityRecord) {
     onRecords([...records.filter((item) => item.id !== record.id), record]);
@@ -1149,7 +1178,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
 
   async function publish() {
     if (!writesEnabled || !dry?.signature || !did || !finalConfirm) return;
-    setError(""); setPublishAttempted(true);
+    setError(""); setPublishAttempted(true); setIsPublishing(true);
     const prepared = records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "prepared" as const, createdAt: new Date().toISOString() };
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
@@ -1166,11 +1195,12 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
       upsert({ ...prepared, state: "published" });
       await verifyReadback(prepared);
     } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Public activity failed."} Do not resend this signature; use CHECK READ-BACK AGAIN.`); }
+    finally { setIsPublishing(false); }
   }
 
   async function verifyReadback(prepared?: PublicActivityRecord) {
     if (!dry?.signature || !did) return;
-    setError("");
+    setError(""); setIsCheckingReadback(true);
     const record = prepared || records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "published" as const, createdAt: new Date().toISOString() };
     try {
       const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
@@ -1181,6 +1211,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
       const receipt = await createReceipt(room, found, dry.signature);
       upsert({ ...record, state: "verified", receipt });
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Read-back verification failed."); }
+    finally { setIsCheckingReadback(false); }
   }
 
   return <Modal title="ACTIVITY DESK" onClose={onClose} wide>
@@ -1195,10 +1226,11 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
       {!dry ? <button className="button button-primary" disabled={!room || !text.trim()} onClick={preview}>PREVIEW EXACT MESSAGE — DO NOT SEND</button> : <><p className="panel-kicker">EXACT ACTIVITY REVIEW</p><div className="dry-run exact"><p><small>TYPE</small><code>{kind.toUpperCase()}</code></p><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
       {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
       {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p>Sign the exact payload with your existing signer, then paste only its base64url signature. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact activity payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
-      {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
-      {dry?.signature && writesEnabled && !publishAttempted ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT ACTIVITY</button></> : null}
-      {dry?.signature && writesEnabled && publishAttempted ? <div className="readback-retry"><strong>This signature will not be sent again.</strong><p>Only re-check Technocore for the same DID, nonce and exact text.</p><button className="button button-secondary" onClick={() => void verifyReadback()}>CHECK READ-BACK AGAIN</button></div> : null}
-      {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this production build.</strong><small>The complete activity draft is saved locally. Enable writes only on reviewed staging and obtain fresh approval for this exact message.</small></span></div> : null}
+      {isVerified && currentRecord?.receipt ? <div className="activity-success" role="status" aria-live="polite"><div className="activity-success-heading"><Check /><span><strong>VERIFIED ON TECHNOCORE</strong><small>DID + nonce + exact text matched the public room read-back.</small></span></div><ActivityReceiptSummary receipt={currentRecord.receipt} /></div> : null}
+      {dry?.signature && !isVerified && !reachedTechnocore ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
+      {dry?.signature && writesEnabled && !publishAttempted && !reachedTechnocore ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm || isPublishing} onClick={() => void publish()}>{isPublishing ? "PUBLISHING…" : "PUBLISH THIS EXACT ACTIVITY"}</button></> : null}
+      {dry?.signature && writesEnabled && publishAttempted && !isVerified ? <div className="readback-retry" role="status" aria-live="polite"><strong>{isPublishing ? "PUBLISHING · WAITING FOR TECHNOCORE" : reachedTechnocore ? "PUBLISHED · CHECKING THE RECEIPT" : "SUBMISSION FINISHED · RECEIPT NOT FOUND YET"}</strong><p>This exact signature will not be sent again. Read-back only checks for the same DID, nonce, and exact text.</p><button className="button button-secondary" disabled={isPublishing || isCheckingReadback} onClick={() => void verifyReadback()}>{isCheckingReadback ? "CHECKING…" : "CHECK READ-BACK AGAIN"}</button></div> : null}
+      {dry?.signature && !writesEnabled && !isVerified ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this production build.</strong><small>The complete activity draft is saved locally. Enable writes only on reviewed staging and obtain fresh approval for this exact message.</small></span></div> : null}
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
     </div>
   </Modal>;
