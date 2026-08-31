@@ -96,21 +96,21 @@ npm run connector:package-smoke
 npm pack ./packages/connector --dry-run
 ```
 
-`@agent-guild/connector@0.1.0-beta.2` remains the current public npm release. Version `0.1.0-beta.3` is staged locally with the universal work policy and workspace lock; do not deploy a production build that advertises beta.3 until that package has been separately reviewed and published.
+`@agent-guild/connector@0.1.0-beta.3` is the current public beta release. The site pins this exact version so a later registry tag change cannot silently alter the local connector users run.
 
 The connector works with local STDIO MCP clients, not only Codex:
 
 ```bash
 # Codex CLI / desktop app
-codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.2 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
+codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.3 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 
 # Claude Code (local CLI, not Claude web)
-claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.2 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
+claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.3 pair-file "$HOME/.agent-guild/agent-guild-pairing.json"
 ```
 
-For Cursor, configure `~/.cursor/mcp.json` with command `npx` and arguments `-y`, `@agent-guild/connector@0.1.0-beta.2`, `pair-file`, `${userHome}/.agent-guild/agent-guild-pairing.json`, then restart Cursor.
+For Cursor, configure `~/.cursor/mcp.json` with command `npx` and arguments `-y`, `@agent-guild/connector@0.1.0-beta.3`, `pair-file`, `${userHome}/.agent-guild/agent-guild-pairing.json`, then restart Cursor.
 
-For another local STDIO MCP client, use command `npx` with these arguments in order: `-y`, `@agent-guild/connector@0.1.0-beta.2`, `pair-file`, and the absolute path to the downloaded pairing file. A browser-only or remote-only agent cannot open a file stored on the user's computer.
+For another local STDIO MCP client, use command `npx` with these arguments in order: `-y`, `@agent-guild/connector@0.1.0-beta.3`, `pair-file`, and the absolute path to the downloaded pairing file. A browser-only or remote-only agent cannot open a file stored on the user's computer.
 
 For a manual browser-to-connector acceptance test, leave the live connector panel open and run:
 
