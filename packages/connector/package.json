@@ -13,7 +13,7 @@
     "zod": "^4.5.2"
   },
   "license": "MIT",
-  "homepage": "https://agent-guild-heathley.pages.dev",
+  "homepage": "https://agentguild.work",
   "repository": { "type": "git", "url": "git+https://github.com/heathley/agent-guild.git" },
   "keywords": ["mcp", "agent", "technocore", "did", "local-first"]
 }
