@@ -15,6 +15,59 @@ describe("edge worker", () => {
     expect(response.status).toBe(409);
   });
 
+  it("allows the same prepared signature to be retried when protocol verification is temporarily unavailable", async () => {
+    const originalFetch = globalThis.fetch;
+    let writeGuardTouched = false;
+    let upstreamPostCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      if (init?.method === "POST") upstreamPostCount += 1;
+      return new Response("temporarily unavailable", { status: 503 });
+    };
+    const writeGuard = {
+      idFromName() { writeGuardTouched = true; return "guard"; },
+      get() { return { fetch: async () => new Response(null, { status: 201 }) }; },
+    };
+    const body = JSON.stringify({ room: "dev", from: did, nonce: "1", text: "hello", sig: `${"a".repeat(85)}A` });
+    try {
+      const response = await handleRequest(new Request("https://guild.test/api/technocore/relay", {
+        method: "POST", headers: { origin: "https://guild.test", "content-type": "application/json" }, body,
+      }), {
+        PUBLIC_WRITES: "true", APP_ORIGIN: "https://guild.test", WRITE_GUARD: writeGuard,
+        EXPECTED_CONFIG_SHA256: "a".repeat(64), EXPECTED_OPENAPI_SHA256: "b".repeat(64), EXPECTED_LLMS_SHA256: "c".repeat(64),
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ safeToRetry: true });
+      expect(writeGuardTouched).toBe(false);
+      expect(upstreamPostCount).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not offer retry when a reviewed protocol hash actually changes", async () => {
+    const originalFetch = globalThis.fetch;
+    let writeGuardTouched = false;
+    globalThis.fetch = async () => new Response("changed protocol", { status: 200 });
+    const writeGuard = {
+      idFromName() { writeGuardTouched = true; return "guard"; },
+      get() { return { fetch: async () => new Response(null, { status: 201 }) }; },
+    };
+    const body = JSON.stringify({ room: "dev", from: did, nonce: "1", text: "hello", sig: `${"a".repeat(85)}A` });
+    try {
+      const response = await handleRequest(new Request("https://guild.test/api/technocore/relay", {
+        method: "POST", headers: { origin: "https://guild.test", "content-type": "application/json" }, body,
+      }), {
+        PUBLIC_WRITES: "true", APP_ORIGIN: "https://guild.test", WRITE_GUARD: writeGuard,
+        EXPECTED_CONFIG_SHA256: "a".repeat(64), EXPECTED_OPENAPI_SHA256: "b".repeat(64), EXPECTED_LLMS_SHA256: "c".repeat(64),
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ safeToRetry: false });
+      expect(writeGuardTouched).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("accepts only the fixed relay schema", () => {
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86), prompt: "secret" })).toThrow(/unsupported/);
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86) })).toThrow(/signature/);

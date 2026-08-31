@@ -84,8 +84,18 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         return json({ error: "Public writes are disabled on this deployment." }, 403, request, env);
       }
       assertWriteOrigin(request, env);
-      if (!await protocolMatches(env)) {
-        return json({ error: "Public writes are locked because the reviewed Technocore protocol hashes are missing or changed." }, 409, request, env);
+      const protocol = await protocolStatus(env);
+      if (!protocol.ok && protocol.reason === "unavailable") {
+        return json({
+          error: "Technocore protocol verification is temporarily unavailable. Nothing was reserved or relayed.",
+          safeToRetry: true,
+        }, 503, request, env);
+      }
+      if (!protocol.ok) {
+        return json({
+          error: "Public writes are locked because the reviewed Technocore protocol hashes are missing or changed.",
+          safeToRetry: false,
+        }, 409, request, env);
       }
       const body = await readSmallJson(request, 12_000);
       const message = validateRelay(body);
@@ -399,14 +409,23 @@ async function sha256(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function protocolMatches(env) {
+async function protocolStatus(env) {
   const targets = ["/config", "/openapi.json", "/llms.txt"];
-  if (targets.some((path) => !expectedHash(env, path))) return false;
-  const checks = await Promise.all(targets.map(async (path) => {
-    const response = await fetch(`${TECHNOCORE}${path}`, { headers: { "User-Agent": "Agent-Guild/0.2" } });
-    return response.ok && await sha256(await response.text()) === expectedHash(env, path);
-  }));
-  return checks.every(Boolean);
+  if (targets.some((path) => !expectedHash(env, path))) return { ok: false, reason: "changed" };
+  try {
+    const checks = await Promise.all(targets.map(async (path) => {
+      const response = await fetch(`${TECHNOCORE}${path}`, { headers: { "User-Agent": "Agent-Guild/0.2" } });
+      if (!response.ok) {
+        return { ok: false, reason: response.status >= 500 || response.status === 408 || response.status === 429 ? "unavailable" : "changed" };
+      }
+      return { ok: await sha256(await response.text()) === expectedHash(env, path), reason: "changed" };
+    }));
+    if (checks.some((check) => !check.ok && check.reason === "unavailable")) return { ok: false, reason: "unavailable" };
+    if (checks.some((check) => !check.ok)) return { ok: false, reason: "changed" };
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
 }
 
 function expectedHash(env, path) {

@@ -71,6 +71,18 @@ const PROOF_STEPS: { state: ProofState; number: string; label: string; title: st
   { state: "reviewed", number: "04", label: "REVIEWED", title: "Independent check", detail: "Different DID, same result hash" },
 ];
 
+async function readRelayFailure(response: Response): Promise<{ error: string; safeToRetry: boolean }> {
+  try {
+    const body = await response.json() as { error?: string; safeToRetry?: boolean };
+    return {
+      error: body.error || "Technocore rejected the message.",
+      safeToRetry: body.safeToRetry === true,
+    };
+  } catch {
+    return { error: "Technocore rejected the message.", safeToRetry: false };
+  }
+}
+
 function App() {
   const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
   const [roomFeed, setRoomFeed] = useState<FeedState<PublicRoom[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
@@ -1140,7 +1152,15 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
     const prepared = records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "prepared" as const, createdAt: new Date().toISOString() };
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
-      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      if (!response.ok) {
+        const failure = await readRelayFailure(response);
+        if (failure.safeToRetry) {
+          setPublishAttempted(false); setFinalConfirm(false);
+          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          return;
+        }
+        throw new Error(failure.error || "Technocore rejected the message.");
+      }
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       upsert({ ...prepared, state: "published" });
       await verifyReadback(prepared);
@@ -1220,7 +1240,15 @@ function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission:
     setAttempted(true); setError("");
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room: "kibble", from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
-      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Kibble CLAIM was rejected.");
+      if (!response.ok) {
+        const failure = await readRelayFailure(response);
+        if (failure.safeToRetry) {
+          setAttempted(false); setConfirmed(false);
+          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          return;
+        }
+        throw new Error(failure.error || "Kibble CLAIM was rejected.");
+      }
       localStorage.setItem(`agent-guild:nonce:${did}:kibble`, dry.nonce);
       await verifyClaim();
     } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Kibble CLAIM failed."} Do not resend this signature; check it again.`); }
@@ -1350,7 +1378,15 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
     setError(""); setPublishAttempted(true);
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
-      if (!response.ok) throw new Error((await response.json() as { error?: string }).error || "Technocore rejected the message.");
+      if (!response.ok) {
+        const failure = await readRelayFailure(response);
+        if (failure.safeToRetry) {
+          setPublishAttempted(false); setFinalConfirm(false);
+          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          return;
+        }
+        throw new Error(failure.error || "Technocore rejected the message.");
+      }
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       await onUpdate("published");
       await verifyReadback();
