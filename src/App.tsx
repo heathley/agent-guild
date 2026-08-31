@@ -551,7 +551,7 @@ function App() {
             <SourceFeedBar label="TECHNOCORE PUBLIC ROOMS" feed={roomFeed} />
             <div className="source-toolbar">
               <label htmlFor="room-search"><Search size={16} /><span>Find a room or topic</span></label>
-              <input id="room-search" value={roomQuery} onChange={(event) => { setRoomQuery(event.target.value); setRoomLimit(12); }} placeholder="Search 40 live rooms" />
+              <input id="room-search" value={roomQuery} onChange={(event) => { setRoomQuery(event.target.value); setRoomLimit(12); }} placeholder="Search up to 100 live rooms" />
               <span>{filteredRooms.length} MATCH{filteredRooms.length === 1 ? "" : "ES"}</span>
             </div>
             {roomFeed.status === "loading" && !roomFeed.data.length ? <EmptyState icon={<RefreshCw />} title="Reading Technocore…" detail="A second attempt runs automatically if the first snapshot is empty." /> : null}

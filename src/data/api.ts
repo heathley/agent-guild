@@ -39,7 +39,7 @@ export async function fetchTechnocoreRooms(signal?: AbortSignal): Promise<Public
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const payload = await requestJson("/api/technocore/rooms?limit=40", signal);
+      const payload = await requestJson("/api/technocore/rooms?limit=100", signal);
       const rooms = normalizeRooms(payload);
       if (rooms.length || attempt === 1) return rooms;
       lastError = new Error("Technocore returned an empty room snapshot.");
