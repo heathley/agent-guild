@@ -21,8 +21,8 @@ new_sqlite_classes = ["WriteGuard"]
 [vars]
 PUBLIC_WRITES = "false"
 APP_ORIGIN = "https://agent-guild-heathley.pages.dev"
-EXPECTED_CONFIG_SHA256 = "4f4704f6cd193aac261f6cac2c288d48b0604a11949b1dbd134e424001b1e245"
-EXPECTED_OPENAPI_SHA256 = "a74e1663aaf68fe5c0ab85747a848c63682cd133c842fe2b3ef9426baca8c11b"
+EXPECTED_CONFIG_SHA256 = "18a67953c1097dd8cb96accfc094d23c19b02e022e4a0b42db8c02218ea20fa4"
+EXPECTED_OPENAPI_SHA256 = "5ba02a3e5d777e21476d2e2100798e70b4a6bbb0bcde76efcbc57f799b7bac6f"
 EXPECTED_LLMS_SHA256 = "36e6db26eb38abf7e2b5d7938c77ac9889ab1e5ce87eca0e3738fea75c18883e"
 # Public writes remain disabled. Hashes are compared live and must be reviewed
 # again before any future writes-enabled staging deployment.
