@@ -74,12 +74,12 @@ h1 em { color: var(--cyan); font-style: normal; }
 .hero-core::before { width: 1px; height: 28px; top: -4px; }
 .hero-core::after { width: 62%; height: 1px; bottom: 21px; }
 .dock-marker { color: var(--cyan); font: 700 8px "Space Mono", monospace; letter-spacing: .14em; margin-bottom: 10px; }
-.docking-frame { width: min(100%, 430px); aspect-ratio: 1199 / 1312; position: relative; border: 1px solid var(--line); background: #020714; padding: 8px; overflow: hidden; }
-.docking-frame::before { content: ""; position: absolute; z-index: 2; inset: 18px; border: 1px solid rgba(0,180,216,.24); pointer-events: none; }
+.docking-frame { width: min(100%, 430px); aspect-ratio: 1199 / 1312; position: relative; background: transparent; padding: 0; overflow: visible; }
+.docking-frame::before { content: ""; position: absolute; z-index: 2; left: 16%; right: 16%; bottom: 3%; height: 1px; border: 0; background: rgba(0,180,216,.42); box-shadow: 0 8px 18px rgba(0,180,216,.16); pointer-events: none; }
 .dock-corner { position: absolute; z-index: 3; width: 22px; height: 22px; pointer-events: none; }
 .dock-corner-a { left: 0; top: 0; border-left: 3px solid var(--cyan); border-top: 3px solid var(--cyan); }
 .dock-corner-b { right: 0; bottom: 0; border-right: 3px solid var(--cyan); border-bottom: 3px solid var(--cyan); }
-.docking-frame .mascot-art { width: 100%; height: 100%; }
+.docking-frame .mascot-art { width: 100%; height: 100%; animation: hero-mascot-float 3.4s ease-in-out infinite; }
 .docking-frame .mascot-art img { object-fit: contain; }
 .docking-frame .mascot-signal { top: 8%; right: 8%; }
 .hero-core .mascot-status { bottom: 0; right: 50%; transform: translateX(50%); white-space: nowrap; }
@@ -572,6 +572,7 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .activity-compose { display: grid; gap: 14px; }
 
 @keyframes mascot-breathe { 0%,100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-5px) scaleY(1.008); } }
+@keyframes hero-mascot-float { 0%,100% { transform: translateY(0) rotate(-.35deg); } 50% { transform: translateY(-8px) rotate(.35deg); } }
 @keyframes mascot-walk { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-4px) rotate(1deg); } }
 @keyframes mascot-scan-body { 0%,100% { transform: translateX(-1.5%) rotate(-.7deg); } 50% { transform: translateX(1.5%) rotate(.7deg); } }
 @keyframes mascot-focus-body { 0%,100% { transform: scale(1); } 50% { transform: scale(1.012); } }
