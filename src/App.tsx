@@ -71,15 +71,16 @@ const PROOF_STEPS: { state: ProofState; number: string; label: string; title: st
   { state: "reviewed", number: "04", label: "REVIEWED", title: "Independent check", detail: "Different DID, same result hash" },
 ];
 
-async function readRelayFailure(response: Response): Promise<{ error: string; safeToRetry: boolean }> {
+async function readRelayFailure(response: Response): Promise<{ error: string; safeToRetry: boolean; retryAfterReview: boolean }> {
   try {
-    const body = await response.json() as { error?: string; safeToRetry?: boolean };
+    const body = await response.json() as { error?: string; safeToRetry?: boolean; retryAfterReview?: boolean };
     return {
       error: body.error || "Technocore rejected the message.",
       safeToRetry: body.safeToRetry === true,
+      retryAfterReview: body.retryAfterReview === true,
     };
   } catch {
-    return { error: "Technocore rejected the message.", safeToRetry: false };
+    return { error: "Technocore rejected the message.", safeToRetry: false, retryAfterReview: false };
   }
 }
 
@@ -1156,7 +1157,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
         const failure = await readRelayFailure(response);
         if (failure.safeToRetry) {
           setPublishAttempted(false); setFinalConfirm(false);
-          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          setError(`${failure.error} Nothing reached Technocore. ${failure.retryAfterReview ? "Keep this prepared signature and retry only after the protocol lock has been reviewed." : "You may retry this same prepared signature."}`);
           return;
         }
         throw new Error(failure.error || "Technocore rejected the message.");
@@ -1244,7 +1245,7 @@ function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission:
         const failure = await readRelayFailure(response);
         if (failure.safeToRetry) {
           setAttempted(false); setConfirmed(false);
-          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          setError(`${failure.error} Nothing reached Technocore. ${failure.retryAfterReview ? "Keep this prepared signature and retry only after the protocol lock has been reviewed." : "You may retry this same prepared signature."}`);
           return;
         }
         throw new Error(failure.error || "Kibble CLAIM was rejected.");
@@ -1382,7 +1383,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
         const failure = await readRelayFailure(response);
         if (failure.safeToRetry) {
           setPublishAttempted(false); setFinalConfirm(false);
-          setError(`${failure.error} Nothing reached Technocore. You may retry this same prepared signature.`);
+          setError(`${failure.error} Nothing reached Technocore. ${failure.retryAfterReview ? "Keep this prepared signature and retry only after the protocol lock has been reviewed." : "You may retry this same prepared signature."}`);
           return;
         }
         throw new Error(failure.error || "Technocore rejected the message.");

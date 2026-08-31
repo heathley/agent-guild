@@ -44,7 +44,7 @@ describe("edge worker", () => {
     }
   });
 
-  it("does not offer retry when a reviewed protocol hash actually changes", async () => {
+  it("preserves the prepared signature but requires review when a protocol hash changes before relay", async () => {
     const originalFetch = globalThis.fetch;
     let writeGuardTouched = false;
     globalThis.fetch = async () => new Response("changed protocol", { status: 200 });
@@ -61,7 +61,7 @@ describe("edge worker", () => {
         EXPECTED_CONFIG_SHA256: "a".repeat(64), EXPECTED_OPENAPI_SHA256: "b".repeat(64), EXPECTED_LLMS_SHA256: "c".repeat(64),
       });
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ safeToRetry: false });
+      expect(await response.json()).toMatchObject({ safeToRetry: true, retryAfterReview: true });
       expect(writeGuardTouched).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;

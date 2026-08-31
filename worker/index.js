@@ -89,12 +89,14 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         return json({
           error: "Technocore protocol verification is temporarily unavailable. Nothing was reserved or relayed.",
           safeToRetry: true,
+          retryAfterReview: false,
         }, 503, request, env);
       }
       if (!protocol.ok) {
         return json({
           error: "Public writes are locked because the reviewed Technocore protocol hashes are missing or changed.",
-          safeToRetry: false,
+          safeToRetry: true,
+          retryAfterReview: true,
         }, 409, request, env);
       }
       const body = await readSmallJson(request, 12_000);
