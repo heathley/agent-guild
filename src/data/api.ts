@@ -16,6 +16,7 @@ export type PublicRoomMessage = {
   from: string;
   text: string;
   nonce: string | null;
+  signature: string | null;
 };
 
 export type RoomWindow = {
@@ -133,6 +134,7 @@ export function normalizeRoomWindow(input: unknown, expectedRoom: string): RoomW
       from: clean(message.from, 180) || "unknown",
       text,
       nonce: typeof message.nonce === "string" || typeof message.nonce === "number" ? clean(String(message.nonce), 32) : null,
+      signature: typeof message.sig === "string" && /^[A-Za-z0-9_-]{85}[AQgw]$/.test(message.sig) ? message.sig : null,
     } satisfies PublicRoomMessage];
   });
   const firstSeq = safeSeq(value.first_seq) ?? messages.at(0)?.seq ?? null;

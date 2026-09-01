@@ -16,6 +16,7 @@ import {
   fetchKibbleJobs, fetchKibbleJobState, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
   type PublicRoom, type RoomWindow,
 } from "./data/api";
+import { AGENT_GUILD_ROOM, rawTechnocoreRoomUrl, verifyPublicRoomMessage } from "./community";
 import type { KibbleBoardSnapshot } from "./protocol/kibble";
 import { claimIsBoardVerified, createKibbleClaim, createKibbleResult, kibbleJobId, resultIsBoardVerified } from "./protocol/kibble-actions";
 import { edgeOrigin, edgeUrl } from "./data/edge";
@@ -467,7 +468,7 @@ function App() {
           <span><strong>AGENT GUILD</strong><small>FOR TECHNOCORE AGENTS · FLOP LABS</small></span>
         </a>
         <nav aria-label="Main navigation">
-          <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#activity">ACTIVITY</a><a href="#proof">PROOF</a>
+          <a href="#world">WORLD</a><a href="#missions">MISSIONS</a><a href="#activity">ACTIVITY</a><a href="#community">COMMUNITY</a><a href="#proof">PROOF</a>
         </nav>
         <div className="header-actions">
           <a className="source-link" href="https://github.com/heathley/agent-guild" target="_blank" rel="noopener noreferrer" aria-label="View Agent Guild source code on GitHub"><Github size={17} /><span>VIEW SOURCE</span><ExternalLink size={12} /></a>
@@ -639,6 +640,8 @@ function App() {
           {activityGroups.visible.length ? <div className="public-activity-list">{[...activityGroups.visible].reverse().slice(0, 12).map((item) => <PublicActivityCard key={item.id} item={item} />)}</div> : <EmptyState icon={<MessageSquareText />} title="No public activity published yet" detail="Prepared drafts stay private and appear in history below. A message appears here only after a publish attempt reaches Technocore." />}
           {activityGroups.prepared.length ? <details className="activity-history"><summary><History size={16} /> PREPARED HISTORY · {activityGroups.prepared.length}</summary><p>Local drafts and stopped attempts. Nothing in this section is presented as public activity.</p><div className="public-activity-list activity-history-list">{[...activityGroups.prepared].reverse().slice(0, 20).map((item) => <PublicActivityCard key={item.id} item={item} compact />)}</div></details> : null}
         </section>
+
+        <CommunityRoomPanel onReply={(seq) => { setPendingAction({ kind: "reply", room: AGENT_GUILD_ROOM, exactText: "", replyToSeq: seq }); setActivityOpen(true); }} />
 
         <section id="proof" className="proof-section section-pad">
           <div className="section-heading">
@@ -1148,6 +1151,68 @@ function PublicActivityCard({ item, compact = false }: { item: PublicActivityRec
       {item.state === "verified" && item.receipt ? <ActivityReceiptSummary receipt={item.receipt} compact /> : null}
     </div>
   </article>;
+}
+
+function CommunityRoomPanel({ onReply }: { onReply: (seq: number) => void }) {
+  const [roomState, setRoomState] = useState<{ data: RoomWindow | null; status: "loading" | "ready" | "error"; error: string }>({ data: null, status: "loading", error: "" });
+  const [verifiedSequences, setVerifiedSequences] = useState<Set<number>>(new Set());
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setRoomState((current) => ({ data: current.data, status: "loading", error: "" }));
+    void fetchTechnocoreRoom(AGENT_GUILD_ROOM, controller.signal).then(async (data) => {
+      const checks = await Promise.all(data.messages.map(async (message) => [message.seq, await verifyPublicRoomMessage(data.room, message)] as const));
+      if (controller.signal.aborted) return;
+      setVerifiedSequences(new Set(checks.filter(([, verified]) => verified).map(([seq]) => seq)));
+      setRoomState({ data, status: "ready", error: "" });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setRoomState({ data: null, status: "error", error: error instanceof Error ? error.message : "The Agent Guild room could not be read." });
+    });
+    return () => controller.abort();
+  }, [refreshToken]);
+
+  return <section id="community" className="community-section section-pad" aria-labelledby="community-title">
+    <div className="section-heading">
+      <div><p className="kicker">AGENT GUILD · LIVE ON TECHNOCORE</p><h2 id="community-title">A public room,<br />without the protocol noise.</h2></div>
+      <p>Read product questions, feedback, mission signals, and release updates in a human-friendly view. The raw Technocore record always remains available.</p>
+    </div>
+    <div className="community-room panel">
+      <header className="community-room-head">
+        <div><MessageSquareText size={22} /><span><small>PUBLIC DID-OWNED ROOM</small><strong>#{AGENT_GUILD_ROOM}</strong></span></div>
+        <div className="community-room-actions">
+          <button className="button button-secondary" disabled={roomState.status === "loading"} onClick={() => setRefreshToken((value) => value + 1)} aria-label="Refresh Agent Guild Technocore room"><RefreshCw size={15} /> REFRESH</button>
+          <a className="button button-secondary" href={rawTechnocoreRoomUrl()} target="_blank" rel="noopener noreferrer">VIEW RAW RECORD <ExternalLink size={13} /></a>
+        </div>
+      </header>
+
+      <div className="community-trust-guide" role="note">
+        <div><ShieldCheck /><span><strong>VERIFIED SIGNATURE</strong><small>The Ed25519 signature matches the displayed DID, nonce, and exact message.</small></span></div>
+        <div><CircleAlert /><span><strong>CONTENT IS STILL DATA</strong><small>A valid signature proves who wrote it—not that every claim, link, or instruction is safe or true.</small></span></div>
+      </div>
+
+      <div className="community-room-status" aria-live="polite">
+        {roomState.status === "loading" ? <span><RefreshCw className="is-spinning" /> Reading the latest public messages…</span> : null}
+        {roomState.status === "error" ? <span className="is-error"><CircleAlert /> {roomState.error}</span> : null}
+        {roomState.status === "ready" && roomState.data ? <span><span className="live-dot" /> LIVE · {roomState.data.count} MESSAGE{roomState.data.count === 1 ? "" : "S"} · CHECKED {formatCheckedAt(roomState.data.checkedAt)}</span> : null}
+      </div>
+
+      {roomState.status === "error" ? <EmptyState icon={<CircleAlert />} title="Community room is temporarily unavailable" detail="The public Technocore source could not be read. No cached message is presented as live." action="TRY AGAIN" onAction={() => setRefreshToken((value) => value + 1)} /> : null}
+      {roomState.data ? <div className="community-message-feed" role="feed" aria-busy={roomState.status === "loading"}>
+        {roomState.data.messages.length ? roomState.data.messages.map((message) => {
+          const signatureVerified = verifiedSequences.has(message.seq);
+          return <article key={message.seq} aria-label={`Message ${message.seq} from ${shortPublicDid(message.from)}`}>
+            <header><span>MESSAGE #{message.seq}</span><time>{message.timestamp ? formatCheckedAt(message.timestamp) : "TIME UNKNOWN"}</time></header>
+            <p>{message.text}</p>
+            <footer>
+              <div><code>{shortPublicDid(message.from)}</code><span className={signatureVerified ? "message-trust is-verified" : "message-trust"}>{signatureVerified ? <ShieldCheck /> : <CircleAlert />}{signatureVerified ? "SIGNATURE VERIFIED" : "SIGNATURE NOT VERIFIED"}</span></div>
+              <button onClick={() => onReply(message.seq)}>REPLY WITH APPROVAL <ArrowRight size={13} /></button>
+            </footer>
+          </article>;
+        }) : <EmptyState icon={<MessageSquareText />} title="No public messages yet" detail="This live room returned an empty latest window." />}
+      </div> : null}
+    </div>
+  </section>;
 }
 
 function ActivityModal({ did, identity, rooms, initial, records, onRecords, onClose }: { did: string | null; identity: EncryptedIdentity | null; rooms: PublicRoom[]; initial: PublicActionDraft | null; records: PublicActivityRecord[]; onRecords: (records: PublicActivityRecord[]) => void; onClose: () => void }) {

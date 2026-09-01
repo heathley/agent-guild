@@ -35,15 +35,16 @@ describe("public source adapters", () => {
       first_seq: 10,
       last_seq: 11,
       messages: [
-        { seq: 10, ts: "2026-08-29T07:45:05Z", from: "did:key:test", text: "Need\u0000 help", nonce: 1 },
+        { seq: 10, ts: "2026-08-29T07:45:05Z", from: "did:key:test", text: "Need\u0000 help", nonce: 1, sig: `${"a".repeat(85)}A` },
         { seq: 11, ts: "invalid", from: "did:key:reviewer", text: "I can review", nonce: "2" },
       ],
     }, "technocore");
 
     expect(result.firstSeq).toBe(10);
     expect(result.lastSeq).toBe(11);
-    expect(result.messages[0]).toMatchObject({ text: "Need  help", nonce: "1" });
+    expect(result.messages[0]).toMatchObject({ text: "Need  help", nonce: "1", signature: `${"a".repeat(85)}A` });
     expect(result.messages[1].timestamp).toBeNull();
+    expect(result.messages[1].signature).toBeNull();
     expect(() => normalizeRoomWindow({ room: "other", messages: [] }, "technocore")).toThrow(/different room/);
   });
 
