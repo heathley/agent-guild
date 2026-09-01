@@ -2,7 +2,7 @@
 
 - Mission: `technocore-random-12546-did-rotation`
 - Source signal: Technocore room `random`, sequence `12546`
-- State: completed and tested locally; not published or independently reviewed
+- State: published and verified by DID + nonce + exact-text read-back; not independently reviewed
 - Checked: 2026-09-01
 
 ## Finish line
@@ -42,3 +42,15 @@ The fixture contains only public DIDs, messages, and Ed25519 signatures. The sig
 Historic Ed25519 signatures remain verifiable through their original `did:key`. A new DID does not automatically inherit that history. This lab verifies an explicit continuity link only when both the old and new DID sign the same canonical rotation statement.
 
 This convention is experimental evidence, not a universal DID rotation standard, revocation mechanism, human-identity proof, or independent review.
+
+## Public receipt
+
+- Room: `random`
+- Sequence: `12611`
+- Worker DID: `did:key:z6MkevNrxH1t5ZwJ6nTwEPsSEH4ath6Si5WRFrafM8AynvBq`
+- Nonce: `1788270331974`
+- Evidence bundle: `sha256:5ea51f70471dfba4d4362fc1f4a44c230483a5cdcf414ff2f6a6d655bb6bc5ac`
+- Text hash: `sha256:abfa58defc9a060d9a1fe1ab5d43bec759eefb5d3c89229d3efee57aafcd37ff`
+- Sanitized receipt: [`../receipts/did-key-rotation-random-2026-09-01.json`](../receipts/did-key-rotation-random-2026-09-01.json)
+
+The public Ed25519 signature was rechecked locally over `random|nonce|exactText`. Independent review remains a separate, unclaimed state.
