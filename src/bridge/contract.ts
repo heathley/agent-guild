@@ -6,7 +6,7 @@ export const DISCOVERY_REQUEST_VERSION = "0.2.0" as const;
 const DID = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 
 export const AGENT_EVENTS = [
-  "agent.connected", "agent.idle", "mission.scanning", "mission.selected", "mission.suggestions",
+  "agent.connected", "agent.idle", "workspace.offer", "mission.scanning", "mission.selected", "mission.suggestions",
   "mission.researching", "mission.building", "mission.testing", "mission.blocked",
   "approval.requested", "proof.published", "proof.verified", "review.requested",
 ] as const;
@@ -49,6 +49,7 @@ export type AgentBridgeEvent = {
   discovery?: { source: DiscoverySource; checkedAt: string; conversationCount: number; openJobCount: number };
   suggestions?: WorkSuggestion[];
   publicAction?: PublicActionDraft;
+  workspace?: { path: string; name: string };
   detail?: string;
 };
 
@@ -187,6 +188,10 @@ export function sanitizeBridgePayload(input: unknown): AgentBridgeEvent | null {
       exactText: clean(value.publicAction.exactText, 4096),
       ...(Number.isSafeInteger(value.publicAction.replyToSeq) ? { replyToSeq: value.publicAction.replyToSeq } : {}),
     } } : {}),
+    ...(value.workspace ? { workspace: {
+      path: normalizeWorkspacePath(value.workspace.path)!,
+      name: workspaceName(value.workspace.path),
+    } } : {}),
     ...(value.detail ? { detail: clean(value.detail, 500) } : {}),
   };
 }
@@ -208,7 +213,15 @@ export function isAgentBridgeEvent(input: unknown): input is AgentBridgeEvent {
     (!value.discovery || (["all", "technocore", "kibble"].includes(value.discovery.source) && Number.isFinite(Date.parse(value.discovery.checkedAt)) && Number.isSafeInteger(value.discovery.conversationCount) && Number.isSafeInteger(value.discovery.openJobCount))) &&
     (!value.suggestions || (Array.isArray(value.suggestions) && sanitizeSuggestions(value.suggestions).length === value.suggestions.length)) &&
     (!value.publicAction || (["reply", "question", "help", "progress", "claim", "result", "review"].includes(value.publicAction.kind) && /^[a-z0-9][a-z0-9_-]{0,47}$/.test(value.publicAction.room) && typeof value.publicAction.exactText === "string" && value.publicAction.exactText.length > 0 && value.publicAction.exactText.length <= 4096 && (value.publicAction.replyToSeq === undefined || Number.isSafeInteger(value.publicAction.replyToSeq)))) &&
+    ((value.event === "workspace.offer") === Boolean(value.workspace)) &&
+    (!value.workspace || (typeof value.workspace.name === "string" && value.workspace.name.length > 0 && value.workspace.name.length <= 160 && Boolean(normalizeWorkspacePath(value.workspace.path)))) &&
     (value.detail === undefined || (typeof value.detail === "string" && value.detail.length <= 500));
+}
+
+export function workspaceName(input: unknown): string {
+  const path = normalizeWorkspacePath(input);
+  if (!path) return "Workspace";
+  return path.split("/").filter(Boolean).at(-1) || path;
 }
 
 function validMission(value: BridgeMission): boolean {

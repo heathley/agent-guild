@@ -143,6 +143,9 @@ function App() {
   const [localTitle, setLocalTitle] = useState("");
   const [localSuccess, setLocalSuccess] = useState("");
   const [targetWorkspace, setTargetWorkspace] = useState(() => sessionStorage.getItem("agent-guild:target-workspace") || "");
+  const [workspaceConfirmed, setWorkspaceConfirmed] = useState(() => Boolean(normalizeWorkspacePath(sessionStorage.getItem("agent-guild:target-workspace"))));
+  const [workspaceOffer, setWorkspaceOffer] = useState<AgentBridgeEvent["workspace"] | null>(null);
+  const [workspaceRequestVisible, setWorkspaceRequestVisible] = useState(false);
   const [suggestions, setSuggestions] = useState<WorkSuggestion[]>([]);
   const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>(() => localStorage.getItem("agent-guild:autonomy-mode") === "local-autonomy" ? "local-autonomy" : "suggest");
   const [scanSource, setScanSource] = useState<DiscoverySource>("all");
@@ -365,6 +368,12 @@ function App() {
   }
 
   async function handleAgentEvent(event: AgentBridgeEvent): Promise<string | null> {
+    if (event.event === "workspace.offer" && event.workspace) {
+      setWorkspaceOffer(event.workspace);
+      setWorkspaceRequestVisible(false);
+      setWorkspaceConfirmed(false);
+      return `Your agent suggested ${event.workspace.name}. Confirm the folder here before sending the mission.`;
+    }
     if (event.suggestions?.length) {
       setSuggestions(event.suggestions);
       setSourceTab("suggestions");
@@ -420,8 +429,8 @@ function App() {
   async function startInAgent() {
     if (!activeMission) return;
     const workspace = normalizeWorkspacePath(targetWorkspace);
-    if (!workspace) {
-      setHandoffStatus("Enter the exact absolute folder where this agent task must run, for example /Users/name/project. The mission will not be sent without a workspace lock.");
+    if (!workspace || !workspaceConfirmed) {
+      setHandoffStatus("Confirm the folder where your agent will work before sending the mission.");
       return;
     }
     if (!connectedDid) {
@@ -465,7 +474,7 @@ function App() {
 
   async function askAgentToFindWork() {
     const workspace = normalizeWorkspacePath(targetWorkspace);
-    if (autonomyMode === "local-autonomy" && !workspace) { setHandoffStatus("Choose + work locally needs the exact absolute folder where your agent may work. Add it below before sending the scan."); return; }
+    if (autonomyMode === "local-autonomy" && (!workspace || !workspaceConfirmed)) { setHandoffStatus("Choose + work locally needs a confirmed folder. Ask your agent for its current folder, then confirm it here."); return; }
     if (!connectedDid) { setHandoffStatus("Set up or restore an identity before asking your agent to scan."); setIdentityOpen(true); return; }
     if (!pairing) { setHandoffStatus("Connect your agent before sending a work scan request."); setPairOpen(true); return; }
     const now = Date.now();
@@ -482,6 +491,41 @@ function App() {
       setSourceTab("suggestions");
       setHandoffStatus(`Work scan request sent securely (sequence ${seq}). In your agent chat say: “Check Agent Guild and handle the waiting work scan.”`);
     } catch (error) { setHandoffStatus(error instanceof Error ? error.message : "Work scan request failed."); }
+  }
+
+  function askAgentForWorkspace() {
+    if (!connectedDid) { setHandoffStatus("Set up or restore an identity first."); setIdentityOpen(true); return; }
+    if (!pairing) { setHandoffStatus("Connect your agent first, then ask it for the current folder."); setPairOpen(true); return; }
+    setWorkspaceOffer(null);
+    setWorkspaceConfirmed(false);
+    setWorkspaceRequestVisible(true);
+    setHandoffStatus("Open the local agent task you want to use and send the one-line request shown below.");
+  }
+
+  function confirmWorkspace(path: string) {
+    const normalized = normalizeWorkspacePath(path);
+    if (!normalized) { setHandoffStatus("That folder path is not valid. Ask the agent again or use Advanced manual entry."); return; }
+    setTargetWorkspace(normalized);
+    sessionStorage.setItem("agent-guild:target-workspace", normalized);
+    setWorkspaceConfirmed(true);
+    setWorkspaceOffer({ path: normalized, name: normalized.split("/").filter(Boolean).at(-1) || normalized });
+    setWorkspaceRequestVisible(false);
+    setHandoffStatus(`Folder confirmed: ${normalized.split("/").filter(Boolean).at(-1) || normalized}. No mission was sent yet.`);
+  }
+
+  function editWorkspace(path: string) {
+    setTargetWorkspace(path);
+    setWorkspaceConfirmed(false);
+    setWorkspaceOffer(null);
+    sessionStorage.removeItem("agent-guild:target-workspace");
+  }
+
+  function resetWorkspaceChoice() {
+    setTargetWorkspace("");
+    setWorkspaceConfirmed(false);
+    setWorkspaceOffer(null);
+    setWorkspaceRequestVisible(false);
+    sessionStorage.removeItem("agent-guild:target-workspace");
   }
 
   async function chooseSuggestion(item: WorkSuggestion) {
@@ -506,7 +550,7 @@ function App() {
     ledgerRef.current = []; activeMissionRef.current = null; relayCursor.current = 0;
     setIdentity(null); setExternalDid(""); setLedger([]); setActiveMission(null); setPairing(null); setAgentConnected(false);
     setSuggestions([]); setPublicActivity([]); setPendingAction(null); setStation("spot"); setMascotMood("ready");
-    setTargetWorkspace("");
+    setTargetWorkspace(""); setWorkspaceConfirmed(false); setWorkspaceOffer(null); setWorkspaceRequestVisible(false);
     setHandoffStatus("This browser workspace was erased. Pairing files and MCP settings on your computer were not changed.");
   }
 
@@ -610,8 +654,11 @@ function App() {
             <div className="discovery-controls">
               <fieldset><legend>WHAT MAY THE AGENT DO?</legend><button className={autonomyMode === "suggest" ? "is-selected" : ""} onClick={() => { setAutonomyMode("suggest"); localStorage.setItem("agent-guild:autonomy-mode", "suggest"); }}><strong>SUGGEST FIRST</strong><small>Return up to three choices. I pick one.</small></button><button className={autonomyMode === "local-autonomy" ? "is-selected" : ""} onClick={() => { setAutonomyMode("local-autonomy"); localStorage.setItem("agent-guild:autonomy-mode", "local-autonomy"); }}><strong>CHOOSE + WORK LOCALLY</strong><small>Choose one bounded task and start. Public actions still stop for approval.</small></button></fieldset>
               <label>WHERE SHOULD IT LOOK?<select value={scanSource} onChange={(event) => setScanSource(event.target.value as DiscoverySource)}><option value="all">Technocore + Kibble</option><option value="technocore">Technocore conversations</option><option value="kibble">Kibble open jobs</option></select></label>
-              {autonomyMode === "local-autonomy" ? <label>WHERE MAY IT WORK?<small>Exact absolute folder · required before autonomous local work</small><input value={targetWorkspace} onChange={(event) => { setTargetWorkspace(event.target.value); sessionStorage.setItem("agent-guild:target-workspace", event.target.value); }} placeholder="/Users/name/project" autoComplete="off" spellCheck={false} /></label> : null}
-              <button className="button button-primary" disabled={autonomyMode === "local-autonomy" && !normalizeWorkspacePath(targetWorkspace)} onClick={() => void askAgentToFindWork()}><Radio size={16} /> ASK MY AGENT TO FIND WORK</button>
+              {autonomyMode === "local-autonomy" ? <WorkspaceChooser
+                target={targetWorkspace} confirmed={workspaceConfirmed} offer={workspaceOffer} requestVisible={workspaceRequestVisible} compact
+                onAsk={askAgentForWorkspace} onConfirm={confirmWorkspace} onEdit={editWorkspace} onReset={resetWorkspaceChoice}
+              /> : null}
+              <button className="button button-primary" disabled={autonomyMode === "local-autonomy" && (!workspaceConfirmed || !normalizeWorkspacePath(targetWorkspace))} onClick={() => void askAgentToFindWork()}><Radio size={16} /> ASK MY AGENT TO FIND WORK</button>
             </div>
             <p className="agent-trigger-note"><Clock3 size={15} /><span><strong>Your AI runtime must take a turn.</strong> The request waits safely in its encrypted inbox. A Codex automation can trigger that turn later; otherwise open the agent chat and use the sentence shown below.</span></p>
             {handoffStatus ? <p className="connector-status" role="status" aria-live="polite">{handoffStatus}</p> : null}
@@ -669,12 +716,12 @@ function App() {
               <div className="mission-pack-head"><div><p className="panel-kicker">MISSION PACK · {sourceLabel(activeMission.source)}</p><h3>{activeMission.title}</h3></div><div className="mission-pack-tools"><button className="icon-button" data-tip="Edit this mission's finish line" aria-label="Edit active mission" onClick={() => setEditingMission(true)}><Pencil size={16} /></button><span className={`risk risk-${activeMission.risk}`}>{activeMission.risk.toUpperCase()} RISK</span></div></div>
               <p>{activeMission.summary}</p>
               <div className="mission-columns"><div><small>FINISH LINE</small>{activeMission.successCriteria.map((item) => <p key={item}><Check size={15} />{item}</p>)}</div><div><small>HOW IT BECOMES PROOF</small><p><ShieldCheck size={15} />{activeMission.verification}</p></div></div>
-              <div className="workspace-gate">
-                <LockKeyhole size={19} />
-                <label>Where must your agent do this work?<small>Paste the exact absolute folder for the local agent task. Agent Guild blocks the run if the agent reports a different workspace.</small><input value={targetWorkspace} onChange={(event) => { setTargetWorkspace(event.target.value); sessionStorage.setItem("agent-guild:target-workspace", event.target.value); }} placeholder="/Users/name/project" autoComplete="off" spellCheck={false} /></label>
-              </div>
+              <WorkspaceChooser
+                target={targetWorkspace} confirmed={workspaceConfirmed} offer={workspaceOffer} requestVisible={workspaceRequestVisible}
+                onAsk={askAgentForWorkspace} onConfirm={confirmWorkspace} onEdit={editWorkspace} onReset={resetWorkspaceChoice}
+              />
               <div className="mission-actions">
-                <button className="button button-primary" disabled={!normalizeWorkspacePath(targetWorkspace)} onClick={() => void startInAgent()}><Code2 size={16} /> SEND TO MY AGENT</button>
+                <button className="button button-primary" disabled={!workspaceConfirmed || !normalizeWorkspacePath(targetWorkspace)} onClick={() => void startInAgent()}><Code2 size={16} /> SEND TO MY AGENT</button>
                 <button className="button button-secondary" onClick={() => setPairOpen(true)}>CONNECTOR SETUP</button>
                 <button className="button button-secondary" onClick={() => setProofOpen(true)}><FileCheck2 size={16} /> PREPARE PROOF</button>
               </div>
@@ -733,6 +780,32 @@ function App() {
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
   );
+}
+
+function WorkspaceChooser({ target, confirmed, offer, requestVisible, compact = false, onAsk, onConfirm, onEdit, onReset }: {
+  target: string;
+  confirmed: boolean;
+  offer: AgentBridgeEvent["workspace"] | null;
+  requestVisible: boolean;
+  compact?: boolean;
+  onAsk: () => void;
+  onConfirm: (path: string) => void;
+  onEdit: (path: string) => void;
+  onReset: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const normalizedTarget = normalizeWorkspacePath(target);
+  const prompt = "Tell Agent Guild which folder this task is using.";
+  const selected = confirmed && normalizedTarget ? { path: normalizedTarget, name: normalizedTarget.split("/").filter(Boolean).at(-1) || normalizedTarget } : null;
+
+  return <div className={`workspace-picker ${compact ? "is-compact" : ""}`}>
+    <div className="workspace-picker-heading"><LockKeyhole size={18} /><span><strong>Choose where your agent works</strong><small>Your agent can identify the open task folder. You only confirm it.</small></span></div>
+    {selected ? <div className="workspace-confirmed" role="status"><Check size={17} /><span><small>CONFIRMED FOLDER</small><strong>{selected.name}</strong><code title={selected.path}>{selected.path}</code></span><button className="text-button" onClick={onReset}>CHANGE</button></div>
+      : offer ? <div className="workspace-offer" role="status"><Bot size={18} /><span><small>YOUR AGENT SUGGESTED</small><strong>{offer.name}</strong><code title={offer.path}>{offer.path}</code></span><div className="workspace-offer-actions"><button className="button button-primary" onClick={() => onConfirm(offer.path)}><Check size={15} /> CONFIRM FOLDER</button><button className="text-button" onClick={onAsk}>TRY ANOTHER</button></div></div>
+      : <button className="workspace-ask" onClick={onAsk}><Bot size={18} /><span><strong>ASK MY AGENT FOR THE CURRENT FOLDER</strong><small>No browsing or path typing needed.</small></span><ArrowRight size={17} /></button>}
+    {requestVisible && !offer && !selected ? <div className="workspace-request" role="status" aria-live="polite"><span><small>IN YOUR AGENT CHAT, SEND:</small><strong>“{prompt}”</strong></span><button className="button button-secondary" onClick={() => { void navigator.clipboard.writeText(prompt); setCopied(true); }}>{copied ? <><Check size={14} /> COPIED</> : <><Clipboard size={14} /> COPY REQUEST</>}</button></div> : null}
+    <details className="workspace-manual"><summary>Advanced · enter a folder path manually</summary><label htmlFor={compact ? "manual-workspace-discovery" : "manual-workspace-mission"}>Absolute folder path<input id={compact ? "manual-workspace-discovery" : "manual-workspace-mission"} value={target} onChange={(event) => onEdit(event.target.value)} placeholder="/Users/name/project" autoComplete="off" spellCheck={false} /></label><button className="button button-secondary" disabled={!normalizedTarget} onClick={() => normalizedTarget && onConfirm(normalizedTarget)}>USE THIS FOLDER</button></details>
+  </div>;
 }
 
 function SetupGuide({ connectedDid, pairing, activeMission, onIdentity, onConnector, onMission }: { connectedDid: string | null; pairing: RelayPairingFile | null; activeMission: Mission | null; onIdentity: () => void; onConnector: () => void; onMission: () => void }) {
@@ -1017,7 +1090,7 @@ function ConnectorModal({ did, pairing, agentConnected, initialIssue, onPairingR
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED !== "false";
-  const connectorPackage = "@agent-guild/connector@0.1.0-beta.5";
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.6";
   const pairingDownloadName = session ? pairingFileName(session.sessionId) : "agent-guild-pairing.json";
   const pairingHomePath = "$HOME/.agent-guild/active-pairing.json";
   const movePairingCommand = `mkdir -p "$HOME/.agent-guild"
@@ -1189,7 +1262,7 @@ chmod 600 "${pairingHomePath}"`;
     {relayState === "manual" ? <label>Paste one encrypted fallback envelope from the connector<textarea value={envelope} onChange={(event) => setEnvelope(event.target.value)} placeholder={'{"version":1,"eventId":"…","iv":"…","ciphertext":"…"}'} /></label> : null}
     {relayState === "manual" ? <button className="button button-secondary full" disabled={!envelope.trim()} onClick={() => void importEvent()}>IMPORT SAFE EVENT</button> : null}
     {status ? <p className="connector-status">{status}</p> : null}
-    <p className="fine-print">{connectorPublished ? "This pinned beta package is the audited ten-tool connector with live read-only discovery, a universal work policy, and workspace-locked mission starts." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
+    <p className="fine-print">{connectorPublished ? "This pinned beta package is the audited eleven-tool connector with live read-only discovery, a universal work policy, human-confirmed folder offers, and workspace-locked mission starts." : "The installable package is built and tested but not public yet, so this private beta uses a trusted repository checkout."} No private prompt, key, environment value, or raw terminal output is accepted by the bridge schema.</p>
   </Modal>;
 }
 

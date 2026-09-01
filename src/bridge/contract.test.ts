@@ -90,6 +90,13 @@ describe("Agent Bridge contract", () => {
     expect(normalizeWorkspacePath("/Users/test/../Flop")).toBeNull();
   });
 
+  it("accepts only a normalized workspace offer and derives its friendly name", () => {
+    const safe = sanitizeBridgePayload({ ...event, event: "workspace.offer", workspace: { path: "/Users/test/Flop-Friend/", name: "untrusted label" } });
+    expect(safe?.workspace).toEqual({ path: "/Users/test/Flop-Friend", name: "Flop-Friend" });
+    expect(sanitizeBridgePayload({ ...event, event: "workspace.offer", workspace: { path: "../wrong", name: "wrong" } })).toBeNull();
+    expect(sanitizeBridgePayload({ ...event, event: "workspace.offer" })).toBeNull();
+  });
+
   it("requires a workspace for autonomous work but not suggestion-only scans", () => {
     const base = {
       version: DISCOVERY_REQUEST_VERSION, requestId: "discovery_1234",

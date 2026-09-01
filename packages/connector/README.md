@@ -37,6 +37,7 @@ The pairing file is a temporary encrypted session pass. It is not a DID backup a
 - `guild_scan_work`
 - `guild_suggest_work`
 - `guild_propose_mission`
+- `guild_offer_workspace`
 - `guild_start_run`
 - `guild_report_progress`
 - `guild_attach_evidence`
@@ -45,4 +46,4 @@ The pairing file is a temporary encrypted session pass. It is not a DID backup a
 
 There is no general `post_message` tool.
 
-Mission assignments carry an encrypted exact workspace path. `guild_start_run` requires the agent to report its current absolute workspace and blocks the run when it does not match. The connector also supplies short universal Technocore safety instructions to every MCP client. A richer optional Codex skill is kept separately in `skills/agent-guild-technocore-work`; installing the npm package does not silently install a Codex skill.
+The `guild_offer_workspace` tool sends only the current task folder through the encrypted relay for human confirmation; it does not start work. Mission assignments then carry the confirmed exact workspace path. `guild_start_run` requires the agent to report its current absolute workspace and blocks the run when it does not match. The connector also supplies short universal Technocore safety instructions to every MCP client. A richer optional Codex skill is kept separately in `skills/agent-guild-technocore-work`; installing the npm package does not silently install a Codex skill.

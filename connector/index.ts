@@ -149,7 +149,7 @@ function assignmentSummary() {
   };
 }
 
-function event(name: AgentEventName, detail?: string, evidence?: AgentBridgeEvent["evidence"], extra: Partial<Pick<AgentBridgeEvent, "mission" | "discovery" | "suggestions" | "publicAction">> = {}): AgentBridgeEvent {
+function event(name: AgentEventName, detail?: string, evidence?: AgentBridgeEvent["evidence"], extra: Partial<Pick<AgentBridgeEvent, "mission" | "discovery" | "suggestions" | "publicAction" | "workspace">> = {}): AgentBridgeEvent {
   const candidate: AgentBridgeEvent = {
     version: BRIDGE_VERSION,
     eventId: randomUUID(),
@@ -162,6 +162,7 @@ function event(name: AgentEventName, detail?: string, evidence?: AgentBridgeEven
     ...(extra.discovery ? { discovery: extra.discovery } : {}),
     ...(extra.suggestions ? { suggestions: extra.suggestions } : {}),
     ...(extra.publicAction ? { publicAction: extra.publicAction } : {}),
+    ...(extra.workspace ? { workspace: extra.workspace } : {}),
     ...(detail ? { detail } : {}),
   };
   const safe = sanitizeBridgePayload(candidate);
@@ -239,6 +240,22 @@ server.registerTool("guild_propose_mission", {
   const mission: BridgeMission = { id, title, source, summary: outcome, successCriteria: [success], verification: "Attach an artifact and a test or check before any proof claim.", risk, ...(room ? { room } : {}), ...(sourceSeq !== undefined ? { sourceSeq } : {}) };
   state.mission = mission;
   return response(event("mission.selected", `Success: ${success}`, undefined, { mission }), "Mission chosen locally with an exact workspace lock. Nothing has been claimed publicly.", { mission, workspace: { requiredPath, policy: "exact" } });
+});
+
+server.registerTool("guild_offer_workspace", {
+  title: "Offer the current task folder",
+  description: "Offer this local agent task's current absolute folder to Agent Guild for encrypted human confirmation. This does not select a mission or start work.",
+  inputSchema: { workingDirectory: z.string().min(1).max(1024) },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, async ({ workingDirectory }) => {
+  const path = normalizeWorkspacePath(workingDirectory);
+  if (!path) return { isError: true, content: [{ type: "text" as const, text: "The current task folder must be an absolute path without parent traversal or control characters." }] };
+  const name = path.split("/").filter(Boolean).at(-1) || path;
+  return response(
+    event("workspace.offer", `Current task folder offered for confirmation: ${name}.`, undefined, { workspace: { path, name } }),
+    `Folder offered securely: ${name}. Return to Agent Guild and confirm it before sending or starting a mission.`,
+    { workspace: { path, name }, confirmed: false },
+  );
 });
 
 server.registerTool("guild_start_run", {

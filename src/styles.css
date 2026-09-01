@@ -258,6 +258,35 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .workspace-gate label { color: var(--ice); font: 700 10px "Space Mono", monospace; }
 .workspace-gate small { color: var(--secondary); font: 400 11px/1.55 Inter, sans-serif; }
 .workspace-gate input { font-family: "Space Mono", monospace; font-size: 11px; }
+.workspace-picker { display: grid; gap: 12px; margin: 0 0 18px; padding: 16px; border: 1px solid var(--cyan); background: rgba(0, 180, 216, .045); }
+.workspace-picker.is-compact { margin: 0; }
+.workspace-picker-heading { display: flex; align-items: flex-start; gap: 11px; }
+.workspace-picker-heading > svg { flex: none; margin-top: 1px; color: var(--cyan); }
+.workspace-picker-heading span, .workspace-confirmed span, .workspace-offer span, .workspace-ask span, .workspace-request span { display: grid; gap: 4px; min-width: 0; }
+.workspace-picker-heading strong { color: var(--ice); font: 700 10px "Space Mono", monospace; }
+.workspace-picker-heading small { color: var(--secondary); font-size: 11px; line-height: 1.5; }
+.workspace-ask { width: 100%; min-height: 64px; border: 1px solid var(--line); background: var(--base); color: var(--ice); padding: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; text-align: left; cursor: pointer; }
+.workspace-ask:hover, .workspace-ask:focus-visible { border-color: var(--cyan); background: var(--surface-light); }
+.workspace-ask > svg { color: var(--cyan); }
+.workspace-ask strong { font: 700 9px "Space Mono", monospace; }
+.workspace-ask small { color: var(--secondary); font-size: 10px; }
+.workspace-offer, .workspace-confirmed { border: 1px solid var(--line); background: var(--base); padding: 13px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.workspace-offer > svg { color: var(--cyan); }
+.workspace-confirmed { border-color: var(--green); }
+.workspace-confirmed > svg { color: var(--green); }
+.workspace-offer small, .workspace-confirmed small, .workspace-request small { color: var(--cyan); font: 700 8px "Space Mono", monospace; letter-spacing: .06em; }
+.workspace-confirmed small { color: var(--green); }
+.workspace-offer strong, .workspace-confirmed strong { color: var(--ice); font: 700 12px "Space Mono", monospace; }
+.workspace-offer code, .workspace-confirmed code { max-width: 100%; overflow: hidden; color: var(--secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-offer-actions { display: flex; align-items: center; gap: 8px; }
+.text-button { border: 0; background: transparent; color: var(--cyan); padding: 8px; font: 700 8px "Space Mono", monospace; cursor: pointer; }
+.text-button:hover, .text-button:focus-visible { color: var(--ice); text-decoration: underline; }
+.workspace-request { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-left: 3px solid var(--cyan); background: var(--surface-light); padding: 12px; }
+.workspace-request strong { color: var(--ice); font: 700 10px/1.5 "Space Mono", monospace; }
+.workspace-manual { border-top: 1px solid var(--line); padding-top: 10px; }
+.workspace-manual summary { cursor: pointer; color: var(--secondary); font: 700 8px "Space Mono", monospace; }
+.workspace-manual label { margin: 12px 0 8px; color: var(--ice); font: 700 9px "Space Mono", monospace; }
+.workspace-manual input { font-family: "Space Mono", monospace; font-size: 10px; }
 .mission-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .agent-chat-hint { display: flex; align-items: flex-start; gap: 11px; margin-top: 14px; padding: 13px 15px; border-left: 3px solid var(--cyan); background: var(--base); }
 .agent-chat-hint svg { color: var(--cyan); flex: none; }
@@ -734,6 +763,10 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .connector-flow svg { transform: rotate(90deg); }
   .connection-step { grid-template-columns: 1fr; }
   .workspace-gate, .mcp-explainer { grid-template-columns: 1fr; }
+  .workspace-offer, .workspace-confirmed { grid-template-columns: auto minmax(0, 1fr); }
+  .workspace-offer-actions, .workspace-confirmed > .text-button { grid-column: 1 / -1; justify-self: stretch; }
+  .workspace-offer-actions .button { flex: 1; }
+  .workspace-request { align-items: stretch; flex-direction: column; }
   .manual-setup dl > div { grid-template-columns: 1fr; }
   .source-feed-bar { align-items: flex-start; flex-direction: column; }
   .source-feed-bar > span:nth-child(2) { margin-left: 0; }

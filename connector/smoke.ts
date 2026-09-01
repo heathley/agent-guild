@@ -13,13 +13,15 @@ try {
   const names = tools.map((tool) => tool.name).sort();
   const expected = [
     "guild_attach_evidence", "guild_propose_mission", "guild_read_work_policy", "guild_report_progress", "guild_request_public_action",
-    "guild_request_review", "guild_scan_work", "guild_start_run", "guild_status", "guild_suggest_work",
+    "guild_offer_workspace", "guild_request_review", "guild_scan_work", "guild_start_run", "guild_status", "guild_suggest_work",
   ].sort();
   if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error(`Unexpected MCP tools: ${names.join(", ")}`);
   const status = await client.callTool({ name: "guild_status", arguments: {} });
   if (status.isError || !JSON.stringify(status).includes("sessionId")) throw new Error("guild_status smoke call failed.");
   const policy = await client.callTool({ name: "guild_read_work_policy", arguments: {} });
   if (policy.isError || !JSON.stringify(policy).includes("human-approval-required")) throw new Error("guild_read_work_policy smoke call failed.");
+  const workspaceOffer = await client.callTool({ name: "guild_offer_workspace", arguments: { workingDirectory: "/tmp/agent-guild-expected/" } });
+  if (workspaceOffer.isError || !JSON.stringify(workspaceOffer).includes('"confirmed":false') || !JSON.stringify(workspaceOffer).includes('"name":"agent-guild-expected"')) throw new Error("Workspace offer smoke call failed.");
   const orphanResult = await client.callTool({ name: "guild_request_public_action", arguments: {
     kind: "result", room: "d-agent-guild", exactText: "This result must not be delivered without a selected mission.",
   } });
