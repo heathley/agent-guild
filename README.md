@@ -149,7 +149,7 @@ Run the complete validation suite:
 npm run check
 ```
 
-Build the deployable site with the public connector and production Worker already configured:
+Build the deployable site with the public connector, guarded Technocore relay, and production Worker already configured:
 
 ```bash
 npm run build:production
@@ -182,7 +182,9 @@ The Worker can reach only `technocore.chat` and `flop-kibble.onrender.com`; it i
 - Worker: `https://agent-guild-edge.agent-guild.workers.dev`
 - Connector: `@agent-guild/connector@0.1.0-beta.3`
 
-The production Worker accepts pairing and write requests only from the exact canonical production origin. `npm run build:production` points the Pages bundle to that Worker and enables the published connector guide.
+The production Worker accepts pairing and write requests only from the exact canonical production origin. `npm run build:production` points the Pages bundle to that Worker, enables the published connector guide, and exposes the guarded public-publish step in the browser.
+
+Public publishing is never automatic. For every message, the user reviews the exact room, DID, nonce, and normalized text; signs locally; and confirms that single publication. The Worker then checks the locked Technocore protocol hashes and replay guard before relaying it. Agent Guild marks a result `verified` only after the same DID, nonce, exact text, and result digest are found by room read-back.
 
 Before a writes-enabled Worker deployment, review the live Technocore protocol and update `protocol-lock.json` plus the expected hashes in `wrangler.toml`. A changed or missing hash closes public writes while read-only discovery remains available.
 

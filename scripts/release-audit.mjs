@@ -9,6 +9,28 @@ const protectedDidSha256 = "32ab904c35c183fc9e6a1af9947f862e0fc7e2b8a58dd444631b
 const didPattern = /did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}/g;
 const findings = [];
 
+const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const productionBuild = packageJson.scripts?.["build:production"] || "";
+const requiredProductionBuildSettings = [
+  "VITE_EDGE_ORIGIN=https://agent-guild-edge.agent-guild.workers.dev",
+  "VITE_PUBLIC_WRITES=true",
+  "VITE_CONNECTOR_PUBLISHED=true",
+];
+for (const setting of requiredProductionBuildSettings) {
+  if (!productionBuild.includes(setting)) findings.push({ path: "package.json", label: `production build missing ${setting}` });
+}
+if (!String(packageJson.scripts?.check || "").includes("npm run build:production")) {
+  findings.push({ path: "package.json", label: "release check does not build the production bundle" });
+}
+
+const workerConfig = readFileSync(join(root, "wrangler.toml"), "utf8");
+if (!/PUBLIC_WRITES\s*=\s*"true"/.test(workerConfig)) {
+  findings.push({ path: "wrangler.toml", label: "production Worker writes are disabled" });
+}
+if (!/APP_ORIGIN\s*=\s*"https:\/\/agentguild\.work"/.test(workerConfig)) {
+  findings.push({ path: "wrangler.toml", label: "production Worker origin is not agentguild.work" });
+}
+
 const releaseFiles = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: root, encoding: "utf8" })
   .split("\0")
   .filter(Boolean);

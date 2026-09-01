@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:production": "VITE_EDGE_ORIGIN=https://agent-guild-edge.agent-guild.workers.dev VITE_CONNECTOR_PUBLISHED=true npm run build",
+    "build:production": "VITE_EDGE_ORIGIN=https://agent-guild-edge.agent-guild.workers.dev VITE_PUBLIC_WRITES=true VITE_CONNECTOR_PUBLISHED=true npm run build",
     "test": "vitest run",
     "typecheck:connector": "tsc -p tsconfig.connector.json",
     "build:connector-package": "tsc -p tsconfig.connector.build.json",
@@ -19,7 +19,7 @@
     "connector:evidence-smoke": "tsx connector/evidence-smoke.ts",
     "connector:relay-smoke": "tsx connector/relay-smoke.ts",
     "audit:release": "node scripts/release-audit.mjs",
-    "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build:connector-package && npm run connector:package-smoke && npm run build && npm run audit:release"
+    "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build:connector-package && npm run connector:package-smoke && npm run build:production && npm run audit:release"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
