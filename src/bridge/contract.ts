@@ -33,6 +33,10 @@ export type PublicActionDraft = {
 export function publicActionDestination(action: PublicActionDraft): "activity" | "proof" {
   return action.kind === "result" ? "proof" : "activity";
 }
+
+export function publicResultHasMission(event: Pick<AgentBridgeEvent, "mission" | "publicAction">): boolean {
+  return event.publicAction?.kind !== "result" || Boolean(event.mission);
+}
 export type AgentBridgeEvent = {
   version: typeof BRIDGE_VERSION;
   eventId: string;

@@ -20,11 +20,19 @@ try {
   if (status.isError || !JSON.stringify(status).includes("sessionId")) throw new Error("guild_status smoke call failed.");
   const policy = await client.callTool({ name: "guild_read_work_policy", arguments: {} });
   if (policy.isError || !JSON.stringify(policy).includes("human-approval-required")) throw new Error("guild_read_work_policy smoke call failed.");
+  const orphanResult = await client.callTool({ name: "guild_request_public_action", arguments: {
+    kind: "result", room: "d-agent-guild", exactText: "This result must not be delivered without a selected mission.",
+  } });
+  if (!orphanResult.isError || !JSON.stringify(orphanResult).includes("Select or receive a mission")) throw new Error("Missionless result draft was not blocked.");
   const proposed = await client.callTool({ name: "guild_propose_mission", arguments: {
     id: "smoke:workspace", title: "Workspace guard", outcome: "Prove that a mission cannot start in the wrong project.",
     success: "A wrong path is blocked and the exact path starts locally.", source: "local", risk: "low", workspace: "/tmp/agent-guild-expected",
   } });
   if (proposed.isError) throw new Error("Workspace-locked mission proposal failed.");
+  const missionResult = await client.callTool({ name: "guild_request_public_action", arguments: {
+    kind: "result", room: "d-agent-guild", exactText: "This result belongs to the selected workspace mission.",
+  } });
+  if (missionResult.isError || !JSON.stringify(missionResult).includes('"summary":"Prove that a mission cannot start in the wrong project."')) throw new Error("Selected mission was not preserved on the result draft.");
   const blocked = await client.callTool({ name: "guild_start_run", arguments: { mode: "test", workingDirectory: "/tmp/wrong-project" } });
   if (!blocked.isError || !JSON.stringify(blocked).includes("Workspace mismatch")) throw new Error("Wrong workspace was not blocked.");
   const started = await client.callTool({ name: "guild_start_run", arguments: { mode: "test", workingDirectory: "/tmp/agent-guild-expected" } });

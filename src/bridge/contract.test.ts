@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASSIGNMENT_VERSION, BRIDGE_VERSION, DISCOVERY_REQUEST_VERSION, isAgentBridgeEvent, normalizeWorkspacePath, publicActionDestination, sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment } from "./contract";
+import { ASSIGNMENT_VERSION, BRIDGE_VERSION, DISCOVERY_REQUEST_VERSION, isAgentBridgeEvent, normalizeWorkspacePath, publicActionDestination, publicResultHasMission, sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment } from "./contract";
 
 const event = {
   version: BRIDGE_VERSION,
@@ -14,6 +14,26 @@ describe("Agent Bridge contract", () => {
   it("routes finished results to proof and conversation drafts to activity", () => {
     expect(publicActionDestination({ kind: "result", room: "technocore", exactText: "Finished and tested" })).toBe("proof");
     expect(publicActionDestination({ kind: "question", room: "technocore", exactText: "Can anyone reproduce this?" })).toBe("activity");
+  });
+
+  it("requires an explicit mission on finished-result events", () => {
+    const result = { kind: "result" as const, room: "technocore", exactText: "Finished and tested" };
+    expect(publicResultHasMission({ publicAction: result })).toBe(false);
+    expect(publicResultHasMission({ publicAction: result, mission: { id: "local:1", title: "Check one flow" } })).toBe(true);
+    expect(publicResultHasMission({ publicAction: { ...result, kind: "question" } })).toBe(true);
+  });
+
+  it("preserves the full allowlisted mission on a finished-result event", () => {
+    const mission = {
+      id: "local:1", source: "local" as const, title: "Check one flow", summary: "Confirm the result routing.",
+      successCriteria: ["The result opens under this mission"], verification: "Inspect the Proof Workspace title.", risk: "low" as const,
+      room: "d-agent-guild", sourceSeq: 1,
+    };
+    const safe = sanitizeBridgePayload({
+      ...event, event: "approval.requested", mission,
+      publicAction: { kind: "result", room: "d-agent-guild", exactText: "Finished and tested" },
+    });
+    expect(safe?.mission).toEqual(mission);
   });
 
   it("accepts a model-neutral lifecycle event", () => {

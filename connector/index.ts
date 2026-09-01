@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod/v4";
 import {
   BRIDGE_VERSION, normalizeWorkspacePath, sanitizeBridgePayload,
-  type AgentBridgeEvent, type AgentEventName, type MissionAssignment,
+  type AgentBridgeEvent, type AgentEventName, type BridgeMission, type MissionAssignment,
 } from "../src/bridge/contract.js";
 import { sanitizeSuggestions, type WorkSuggestion } from "../src/bridge/discovery.js";
 import {
@@ -47,7 +47,7 @@ const WORK_POLICY = {
 
 const server = new McpServer({ name: "agent-guild-connector", version: BRIDGE_VERSION }, { instructions: CORE_WORK_RULES });
 const state: {
-  mission?: { id: string; title: string };
+  mission?: BridgeMission;
   workspace?: string;
   assignment?: MissionAssignment;
   discoveryRequest?: import("../src/bridge/contract.js").DiscoveryRequest;
@@ -111,7 +111,7 @@ async function refreshAssignment(): Promise<boolean> {
       const assignment = await decryptRelayedCommand(relayPairing, command);
       if ("mission" in assignment) {
         state.assignment = assignment;
-        state.mission = { id: assignment.mission.id, title: assignment.mission.title };
+        state.mission = { ...assignment.mission };
         state.workspace = assignment.workspace.requiredPath;
       } else {
         state.discoveryRequest = assignment;
@@ -235,9 +235,9 @@ server.registerTool("guild_propose_mission", {
   if (!requiredPath) return { isError: true, content: [{ type: "text" as const, text: "Provide the exact absolute workspace path. Relative paths, parent traversal, and control characters are rejected." }] };
   state.assignment = undefined;
   state.discoveryRequest = undefined;
-  state.mission = { id, title };
   state.workspace = requiredPath;
-  const mission = { id, title, source, summary: outcome, successCriteria: [success], verification: "Attach an artifact and a test or check before any proof claim.", risk, ...(room ? { room } : {}), ...(sourceSeq !== undefined ? { sourceSeq } : {}) };
+  const mission: BridgeMission = { id, title, source, summary: outcome, successCriteria: [success], verification: "Attach an artifact and a test or check before any proof claim.", risk, ...(room ? { room } : {}), ...(sourceSeq !== undefined ? { sourceSeq } : {}) };
+  state.mission = mission;
   return response(event("mission.selected", `Success: ${success}`, undefined, { mission }), "Mission chosen locally with an exact workspace lock. Nothing has been claimed publicly.", { mission, workspace: { requiredPath, policy: "exact" } });
 });
 
@@ -288,7 +288,19 @@ server.registerTool("guild_request_public_action", {
   description: "Prepare one reply, question, help request, progress update, claim, result, or review message for exact human approval. This tool cannot send it.",
   inputSchema: { kind: z.enum(["reply", "question", "help", "progress", "claim", "result", "review"]), room: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,47}$/), exactText: z.string().min(1).max(4096), replyToSeq: z.number().int().nonnegative().optional() },
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-}, async ({ kind, room, exactText, replyToSeq }) => response(event("approval.requested", `${kind} for #${room}`, undefined, { publicAction: { kind, room, exactText, ...(replyToSeq !== undefined ? { replyToSeq } : {}) } }), "Human approval required. No message was sent."));
+}, async ({ kind, room, exactText, replyToSeq }) => {
+  if (kind === "result" && !state.mission) {
+    return {
+      isError: true,
+      content: [{ type: "text" as const, text: "Select or receive a mission before preparing a result. No draft was delivered and nothing was published." }],
+    };
+  }
+  return response(
+    event("approval.requested", `${kind} for #${room}`, undefined, { publicAction: { kind, room, exactText, ...(replyToSeq !== undefined ? { replyToSeq } : {}) } }),
+    "Human approval required. No message was sent.",
+    { ...(state.mission ? { mission: state.mission } : {}) },
+  );
+});
 
 server.registerTool("guild_request_review", {
   title: "Request independent review",

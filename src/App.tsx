@@ -10,7 +10,7 @@ import {
   pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
-import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, publicActionDestination, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
+import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, publicActionDestination, publicResultHasMission, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
 import type { AutonomyMode, DiscoverySource, WorkSuggestion } from "./bridge/discovery";
 import {
   fetchKibbleJobs, fetchKibbleJobState, fetchTechnocoreProtocolStatus, fetchTechnocoreRoom, fetchTechnocoreRooms,
@@ -369,12 +369,8 @@ function App() {
       setSuggestions(event.suggestions);
       setSourceTab("suggestions");
     }
-    if (event.publicAction && publicActionDestination(event.publicAction) === "proof") {
-      setPendingProofDraft(event.publicAction);
-      setProofOpen(true);
-    } else if (event.publicAction) {
-      setPendingAction(event.publicAction);
-      setActivityOpen(true);
+    if (!publicResultHasMission(event)) {
+      return "Result draft rejected: the connected agent did not identify its mission. Select or send the mission first. Nothing was signed or published.";
     }
     let nextLedger = ledgerRef.current;
     let eventMission = activeMissionRef.current;
@@ -405,6 +401,13 @@ function App() {
     const activity = recordActivityFromEvent(nextLedger, event, connectedDid);
     if (activity.accepted) nextLedger = activity.entries;
     if (nextLedger !== ledgerRef.current) { ledgerRef.current = nextLedger; setLedger(nextLedger); await saveLedger(nextLedger); }
+    if (event.publicAction && publicActionDestination(event.publicAction) === "proof") {
+      setPendingProofDraft(event.publicAction);
+      setProofOpen(true);
+    } else if (event.publicAction) {
+      setPendingAction(event.publicAction);
+      setActivityOpen(true);
+    }
     setStation(stationForEvent(event.event));
     setMascotMood(moodForEvent(event.event));
     const state = event.mission ? nextLedger.find((entry) => entry.mission.id === event.mission?.id)?.state || "planned" : "planned";
@@ -1014,7 +1017,7 @@ function ConnectorModal({ did, pairing, agentConnected, initialIssue, onPairingR
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED !== "false";
-  const connectorPackage = "@agent-guild/connector@0.1.0-beta.4";
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.5";
   const pairingDownloadName = session ? pairingFileName(session.sessionId) : "agent-guild-pairing.json";
   const pairingHomePath = "$HOME/.agent-guild/active-pairing.json";
   const movePairingCommand = `mkdir -p "$HOME/.agent-guild"

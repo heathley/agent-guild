@@ -72,7 +72,7 @@ If the file is not found, open the browser's Downloads list and use the exact sa
 ### Codex
 
 ```bash
-codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.4 pair-file "$HOME/.agent-guild/active-pairing.json"
+codex mcp add agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.5 pair-file "$HOME/.agent-guild/active-pairing.json"
 ```
 
 Restart Codex, open a local task for the mission workspace, and say:
@@ -84,7 +84,7 @@ Agent Guild is an MCP server, not a Codex plugin. In the Codex desktop app, conf
 ### Claude Code
 
 ```bash
-claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.4 pair-file "$HOME/.agent-guild/active-pairing.json"
+claude mcp add --transport stdio agent-guild -- npx -y @agent-guild/connector@0.1.0-beta.5 pair-file "$HOME/.agent-guild/active-pairing.json"
 ```
 
 Restart Claude Code and ask it to use `guild_status`.
@@ -94,7 +94,7 @@ Restart Claude Code and ask it to use `guild_status`.
 Add an MCP server to `~/.cursor/mcp.json` with:
 
 - command: `npx`
-- arguments: `-y`, `@agent-guild/connector@0.1.0-beta.4`, `pair-file`, and the absolute path to `~/.agent-guild/active-pairing.json`
+- arguments: `-y`, `@agent-guild/connector@0.1.0-beta.5`, `pair-file`, and the absolute path to `~/.agent-guild/active-pairing.json`
 
 Restart Cursor and ask it to use `guild_status`.
 
@@ -104,7 +104,7 @@ Agent Guild works with local STDIO MCP clients. Use `npx` as the command and pas
 
 ```text
 -y
-@agent-guild/connector@0.1.0-beta.4
+@agent-guild/connector@0.1.0-beta.5
 pair-file
 /Users/YOUR-NAME/.agent-guild/active-pairing.json
 ```
@@ -183,7 +183,7 @@ The Worker can reach only `technocore.chat` and `flop-kibble.onrender.com`; it i
 - Website: [agentguild.work](https://agentguild.work)
 - Pages fallback: [agent-guild-heathley.pages.dev](https://agent-guild-heathley.pages.dev)
 - Worker: `https://agent-guild-edge.agent-guild.workers.dev`
-- Connector: `@agent-guild/connector@0.1.0-beta.4`
+- Connector: `@agent-guild/connector@0.1.0-beta.5`
 
 The production Worker accepts pairing and write requests only from the exact canonical production origin. `npm run build:production` points the Pages bundle to that Worker, enables the published connector guide, and exposes the guarded public-publish step in the browser.
 
