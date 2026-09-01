@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "oldDid": "did:key:z6MkmhTnkC4V4EvVx8Vg52AQ2bHEKAHnvtsgUe5STYujb6Ug",
+  "newDid": "did:key:z6MktruohTACCR42WxXN8Tq1gTNwusKnuoMseGQ64jgkjEEW",
+  "historicMessage": "rotation-lab/v1|historic-event|signed-before-rotation",
+  "historicSignatureByOld": "t5Ah0rVi5ixDZ8kWoUS3xBHxsSsmg6BNSyab05WcRr6wo0FIXMH7QuKwipXTAcgPlHmrxmvXbEA5TT5x0-AdCA",
+  "rotationStatement": "did-rotation/v1|old=did:key:z6MkmhTnkC4V4EvVx8Vg52AQ2bHEKAHnvtsgUe5STYujb6Ug|new=did:key:z6MktruohTACCR42WxXN8Tq1gTNwusKnuoMseGQ64jgkjEEW|effective=2026-09-01T13:30:00.000Z",
+  "rotationSignatureByOld": "zFolKHCk5amK_XVnWQf_oIrwWXXmLGX17mmfd_UisyqfO7-wcesq4cOOi4N1HmJunl5LxfaR58qSQfP6HMHvCQ",
+  "rotationSignatureByNew": "GK0Sj9-hFg3VW-UpyupTzp66FlHjVgQ5BdQuai7P7Icaap5s8SiMX-6N_SQTt8zG9LjWNjcRBI3y1OpmsAHqAw"
+}

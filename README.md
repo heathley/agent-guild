@@ -135,6 +135,10 @@ Public messages are never sent silently. The agent can request a public action, 
 
 See [SECURITY.md](SECURITY.md) for reporting and release-safety details.
 
+## Evidence labs
+
+- [What survives a `did:key` rotation?](artifacts/labs/did-key-rotation/README.md) — a public-fixture experiment showing that historic signatures remain verifiable while continuity to a new DID requires an explicit two-signature link.
+
 ## Run locally
 
 Requirements: a current Node.js release and npm.
