@@ -108,7 +108,11 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ did: message.from, text: message.text, nonce: message.nonce, sig: message.sig }),
       });
-      return withCors(new Response(await upstream.text(), {
+      const upstreamBody = await upstream.text();
+      if (!upstream.ok) {
+        return json(describeUpstreamRelayFailure(upstream.status, upstreamBody), upstream.status, request, env);
+      }
+      return withCors(new Response(upstreamBody, {
         status: upstream.status,
         headers: { "content-type": upstream.headers.get("content-type") || "application/json" },
       }), request, env);
@@ -118,6 +122,32 @@ export async function handleRequest(request, env = {}, ctx = {}) {
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Request failed." }, 400, request, env);
   }
+}
+
+export function describeUpstreamRelayFailure(status, body = "") {
+  let detail = "";
+  try {
+    const parsed = JSON.parse(body);
+    detail = cleanPublic(parsed?.error, 180);
+  } catch {
+    detail = cleanPublic(String(body).split("\n", 1)[0], 180).replace(/<[^>]*>/g, "").trim();
+  }
+  if (status >= 500) {
+    return {
+      error: "Technocore is temporarily unavailable after submission. Delivery is unconfirmed.",
+      safeToRetry: false,
+      readbackRequired: true,
+      prepareFreshAfterAbsent: true,
+      upstreamStatus: status,
+    };
+  }
+  return {
+    error: detail ? `Technocore refused the message: ${detail}` : `Technocore refused the message (HTTP ${status}).`,
+    safeToRetry: false,
+    readbackRequired: true,
+    prepareFreshAfterAbsent: true,
+    upstreamStatus: status,
+  };
 }
 
 export async function buildDiscoverySnapshot(source = "all", ctx = {}) {

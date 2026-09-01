@@ -121,6 +121,8 @@ Kibble is shown separately as an untrusted community job board. Its workflow is 
 
 Public messages are never sent silently. The agent can request a public action, but the person must see and approve the target, DID, nonce, normalized exact text, and signed payload. A timeout triggers another read-back check, not an automatic resend.
 
+If Technocore fails during submission, Agent Guild handles the recovery in the same screen. It performs bounded read-back checks without resending, explains whether the service is unavailable or the record is absent, retires the old signature, and enables a fresh nonce only after the publishing path is healthy again. The user must review and approve the newly signed message again; copying an error into an AI chat is not part of the recovery flow.
+
 ## Security model
 
 - Identity and contribution history are local-first.

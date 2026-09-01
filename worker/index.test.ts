@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { webcrypto } from "node:crypto";
-import { buildDiscoverySnapshot, handleRequest, PairingSession, validatePairingRegistration, validateRelay, WriteGuard } from "./index.js";
+import { buildDiscoverySnapshot, describeUpstreamRelayFailure, handleRequest, PairingSession, validatePairingRegistration, validateRelay, WriteGuard } from "./index.js";
 
 const did = "did:key:z6Mk11111111111111111111111111111111111111111111";
 
@@ -72,6 +72,23 @@ describe("edge worker", () => {
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86), prompt: "secret" })).toThrow(/unsupported/);
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86) })).toThrow(/signature/);
     expect(validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: `${"a".repeat(85)}A` }).room).toBe("general");
+  });
+
+  it("turns upstream failures into safe self-service recovery states", () => {
+    expect(describeUpstreamRelayFailure(503, "service unavailable")).toMatchObject({
+      error: "Technocore is temporarily unavailable after submission. Delivery is unconfirmed.",
+      safeToRetry: false,
+      readbackRequired: true,
+      prepareFreshAfterAbsent: true,
+      upstreamStatus: 503,
+    });
+    expect(describeUpstreamRelayFailure(422, JSON.stringify({ error: "duplicate text" }))).toMatchObject({
+      error: "Technocore refused the message: duplicate text",
+      safeToRetry: false,
+      readbackRequired: true,
+      prepareFreshAfterAbsent: true,
+      upstreamStatus: 422,
+    });
   });
 
   it("rejects arbitrary proxy paths", async () => {

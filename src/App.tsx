@@ -73,18 +73,23 @@ const PROOF_STEPS: { state: ProofState; number: string; label: string; title: st
   { state: "reviewed", number: "04", label: "REVIEWED", title: "Independent check", detail: "Different DID, same result hash" },
 ];
 
-async function readRelayFailure(response: Response): Promise<{ error: string; safeToRetry: boolean; retryAfterReview: boolean }> {
+async function readRelayFailure(response: Response): Promise<{ error: string; safeToRetry: boolean; retryAfterReview: boolean; readbackRequired: boolean }> {
   try {
-    const body = await response.json() as { error?: string; safeToRetry?: boolean; retryAfterReview?: boolean };
+    const body = await response.json() as { error?: string; safeToRetry?: boolean; retryAfterReview?: boolean; readbackRequired?: boolean };
     return {
       error: body.error || "Technocore rejected the message.",
       safeToRetry: body.safeToRetry === true,
       retryAfterReview: body.retryAfterReview === true,
+      readbackRequired: body.readbackRequired === true,
     };
   } catch {
-    return { error: "Technocore rejected the message.", safeToRetry: false, retryAfterReview: false };
+    return { error: `Technocore returned HTTP ${response.status}. Delivery is unconfirmed.`, safeToRetry: false, retryAfterReview: false, readbackRequired: true };
   }
 }
+
+type SubmissionRecoveryState = "idle" | "checking" | "outage" | "absent";
+
+const waitForReadback = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 type ProtocolPreflightState = "checking" | "ready" | "paused" | "unavailable";
 
@@ -1362,6 +1367,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   const [publishAttempted, setPublishAttempted] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isCheckingReadback, setIsCheckingReadback] = useState(false);
+  const [recoveryState, setRecoveryState] = useState<SubmissionRecoveryState>("idle");
   const [error, setError] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
   const protocol = useProtocolPreflight(writesEnabled);
@@ -1376,7 +1382,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   }
 
   function preview() {
-    setError(""); setFinalConfirm(false); setPublishAttempted(false);
+    setError(""); setFinalConfirm(false); setPublishAttempted(false); setRecoveryState("idle");
     if (!did) return setError("Create or connect a DID before preparing public activity.");
     if (!room) return setError("Choose the Technocore room where this message belongs.");
     const reference = replyToSeq.trim() ? Number(replyToSeq) : undefined;
@@ -1418,29 +1424,60 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
           setError(`${failure.error} Nothing reached Technocore. ${failure.retryAfterReview ? "Keep this prepared signature and retry only after the protocol lock has been reviewed." : "You may retry this same prepared signature."}`);
           return;
         }
-        throw new Error(failure.error || "Technocore rejected the message.");
+        setFinalConfirm(false);
+        setError(failure.error || "Technocore delivery is unconfirmed.");
+        await verifyReadback(prepared, true);
+        return;
       }
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       upsert({ ...prepared, state: "published" });
       await verifyReadback(prepared);
-    } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Public activity failed."} Do not resend this signature; use CHECK READ-BACK AGAIN.`); }
+    } catch {
+      setFinalConfirm(false);
+      setError("The connection ended before Agent Guild could confirm delivery.");
+      await verifyReadback(prepared, true);
+    }
     finally { setIsPublishing(false); }
   }
 
-  async function verifyReadback(prepared?: PublicActivityRecord) {
+  async function verifyReadback(prepared?: PublicActivityRecord, afterFailedSubmission = false) {
     if (!dry?.signature || !did) return;
-    setError(""); setIsCheckingReadback(true);
+    setError(""); setIsCheckingReadback(true); setRecoveryState("checking");
     const record = prepared || records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "published" as const, createdAt: new Date().toISOString() };
     try {
-      const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
-      if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
-      const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
-      const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
-      if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
-      const receipt = await createReceipt(room, found, dry.signature);
-      upsert({ ...record, state: "verified", receipt });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Read-back verification failed."); }
+      for (const delay of [0, 1_200, 2_400]) {
+        if (delay) await waitForReadback(delay);
+        const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
+        if (!readback.ok) {
+          setRecoveryState("outage");
+          setError("Technocore is temporarily unavailable. Agent Guild did not resend anything. Your draft and evidence are safe.");
+          return;
+        }
+        const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
+        const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
+        if (found) {
+          const receipt = await createReceipt(room, found, dry.signature);
+          upsert({ ...record, state: "verified", receipt });
+          setRecoveryState("idle");
+          return;
+        }
+      }
+      setRecoveryState("absent");
+      setError(afterFailedSubmission ? "No matching public record was found. This attempt is finished and its signature is retired." : "No matching public record was found after three checks. Do not resend this signature.");
+    } catch {
+      setRecoveryState("outage");
+      setError("Technocore read-back is temporarily unavailable. Nothing was resent; your draft and evidence are safe.");
+    }
     finally { setIsCheckingReadback(false); }
+  }
+
+  function prepareFreshAttempt() {
+    if (!dry || !did || protocol.state !== "ready") return;
+    const key = `agent-guild:nonce:${did}:${room}`;
+    localStorage.setItem(key, dry.nonce);
+    const nonce = nextNonce(dry.nonce);
+    setDry({ id: dry.id, nonce, normalized: dry.normalized, payload: createSigningPayload(room, nonce, dry.normalized) });
+    setPublishAttempted(false); setFinalConfirm(false); setRecoveryState("idle"); setError("");
   }
 
   return <Modal title="ACTIVITY DESK" onClose={onClose} wide>
@@ -1459,7 +1496,7 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
       {isVerified && currentRecord?.receipt ? <div className="activity-success" role="status" aria-live="polite"><div className="activity-success-heading"><Check /><span><strong>VERIFIED ON TECHNOCORE</strong><small>DID + nonce + exact text matched the public room read-back.</small></span></div><ActivityReceiptSummary receipt={currentRecord.receipt} /></div> : null}
       {dry?.signature && !isVerified && !reachedTechnocore ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
       {dry?.signature && writesEnabled && !publishAttempted && !reachedTechnocore ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm || isPublishing} onClick={() => void publish()}>{isPublishing ? "PUBLISHING…" : "PUBLISH THIS EXACT ACTIVITY"}</button></> : null}
-      {dry?.signature && writesEnabled && publishAttempted && !isVerified ? <div className="readback-retry" role="status" aria-live="polite"><strong>{isPublishing ? "PUBLISHING · WAITING FOR TECHNOCORE" : reachedTechnocore ? "PUBLISHED · CHECKING THE RECEIPT" : "SUBMISSION FINISHED · RECEIPT NOT FOUND YET"}</strong><p>This exact signature will not be sent again. Read-back only checks for the same DID, nonce, and exact text.</p><button className="button button-secondary" disabled={isPublishing || isCheckingReadback} onClick={() => void verifyReadback()}>{isCheckingReadback ? "CHECKING…" : "CHECK READ-BACK AGAIN"}</button></div> : null}
+      {dry?.signature && writesEnabled && publishAttempted && !isVerified ? <div className={`readback-retry recovery-${recoveryState}`} role="status" aria-live="polite"><strong>{isPublishing || recoveryState === "checking" ? "CHECKING WHETHER IT ARRIVED" : recoveryState === "outage" ? "TECHNOCORE IS TEMPORARILY UNAVAILABLE" : recoveryState === "absent" ? "NOT PUBLISHED · OLD SIGNATURE RETIRED" : reachedTechnocore ? "PUBLISHED · CHECKING THE RECEIPT" : "DELIVERY IS UNCONFIRMED"}</strong><p>{recoveryState === "outage" ? "Agent Guild will not resend. Check the service again later; the draft and evidence remain local." : recoveryState === "absent" ? "No matching public record was found after bounded read-back checks. When Technocore is ready, create a fresh nonce and review a new signature." : "Agent Guild is checking the same DID, nonce and exact text. It never resends during this step."}</p><div className="recovery-actions"><button className="button button-secondary" disabled={isPublishing || isCheckingReadback} onClick={() => { protocol.recheck(); void verifyReadback(); }}>{isCheckingReadback ? "CHECKING…" : "CHECK STATUS + READ-BACK"}</button>{recoveryState === "absent" ? <button className="button button-primary" disabled={protocol.state !== "ready"} onClick={prepareFreshAttempt}>PREPARE A NEW SIGNATURE</button> : null}</div></div> : null}
       {dry?.signature && !writesEnabled && !isVerified ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this production build.</strong><small>The complete activity draft is saved locally. Enable writes only on reviewed staging and obtain fresh approval for this exact message.</small></span></div> : null}
       {error ? <p className="form-error"><CircleAlert size={16} />{error}</p> : null}
     </div>
@@ -1566,6 +1603,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
   const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
   const [finalConfirm, setFinalConfirm] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
+  const [recoveryState, setRecoveryState] = useState<SubmissionRecoveryState>("idle");
   const [error, setError] = useState("");
   const [reviewerDid, setReviewerDid] = useState("");
   const [reviewHash, setReviewHash] = useState("");
@@ -1588,6 +1626,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
     setError("");
     setFinalConfirm(false);
     setPublishAttempted(false);
+    setRecoveryState("idle");
   }
 
   useEffect(() => {
@@ -1608,7 +1647,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
   }, [entry?.evidence, mission, proofEvidence.ready]);
 
   function preview() {
-    setError(""); setPublishAttempted(false);
+    setError(""); setPublishAttempted(false); setRecoveryState("idle");
     if (!mission) return setError("Choose a mission first.");
     if (!did) return setError("Create or connect a DID first.");
     if (sharing === "private") return setError("Choose a public room only if you want to publish this finished result.");
@@ -1658,23 +1697,43 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
           setError(`${failure.error} Nothing reached Technocore. ${failure.retryAfterReview ? "Keep this prepared signature and retry only after the protocol lock has been reviewed." : "You may retry this same prepared signature."}`);
           return;
         }
-        throw new Error(failure.error || "Technocore rejected the message.");
+        setFinalConfirm(false);
+        setError(failure.error || "Technocore delivery is unconfirmed.");
+        await verifyReadback(true);
+        return;
       }
       localStorage.setItem(`agent-guild:nonce:${did}:${room}`, dry.nonce);
       await onUpdate("published");
       await verifyReadback();
-    } catch (reason) { setError(`${reason instanceof Error ? reason.message : "Public action failed."} Do not resend this signature; use CHECK READ-BACK AGAIN.`); }
+    } catch {
+      setFinalConfirm(false);
+      setError("The connection ended before Agent Guild could confirm delivery.");
+      await verifyReadback(true);
+    }
   }
 
-  async function verifyReadback() {
+  async function verifyReadback(afterFailedSubmission = false) {
     if (!dry?.signature || !did || !entry) return;
-    setError("");
+    setError(""); setRecoveryState("checking");
     try {
-      const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
-      if (!readback.ok) throw new Error("Published, but read-back is not available yet. Do not resend.");
-      const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
-      const found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
-      if (!found) throw new Error("Published, but DID + nonce + exact text did not match read-back. Do not resend.");
+      let found: TechnocoreRoomMessage | null = null;
+      for (const delay of [0, 1_200, 2_400]) {
+        if (delay) await waitForReadback(delay);
+        const readback = await fetch(edgeUrl(`/api/technocore/room/${room}?limit=200`));
+        if (!readback.ok) {
+          setRecoveryState("outage");
+          setError("Technocore is temporarily unavailable. Agent Guild did not resend anything. Your artifact, test, and draft are safe.");
+          return;
+        }
+        const data = await readback.json() as { messages?: TechnocoreRoomMessage[] };
+        found = findPublishedMessage(data.messages || [], { from: did, nonce: dry.nonce, text: dry.normalized });
+        if (found) break;
+      }
+      if (!found) {
+        setRecoveryState("absent");
+        setError(afterFailedSubmission ? "No matching public result was found. This attempt is finished and its signature is retired." : "No matching public result was found after three checks. Do not resend this signature.");
+        return;
+      }
       const receipt = await createReceipt(room, found, dry.signature, resultHash);
       if (mission?.source === "kibble-community") {
         const jobId = kibbleJobId(mission.id);
@@ -1682,13 +1741,29 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
         const boardJob = await fetchKibbleJobState(jobId);
         if (!resultIsBoardVerified(boardJob, did)) {
           await onUpdate("published", { kibble: { ...(entry.kibble || { jobId }), jobId, resultReceipt: receipt } });
-          throw new Error("The RESULT receipt matched #kibble, but the board has not stored its result hash yet. Do not request review.");
+          setRecoveryState("idle");
+          setError("The RESULT receipt matched #kibble, but the board has not stored its result hash yet. Agent Guild will not unlock review until both records match.");
+          return;
         }
         await onUpdate("verified", { receipt, kibble: { ...(entry.kibble || { jobId }), jobId, resultReceipt: receipt, boardResultHash: boardJob!.resultHash, boardResultVerifiedAt: new Date().toISOString() } });
+        setRecoveryState("idle");
         return;
       }
       await onUpdate("verified", { receipt });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Read-back verification failed."); }
+      setRecoveryState("idle");
+    } catch {
+      setRecoveryState("outage");
+      setError("Technocore read-back is temporarily unavailable. Nothing was resent; your artifact, test, and draft are safe.");
+    }
+  }
+
+  function prepareFreshAttempt() {
+    if (!dry || !did || protocol.state !== "ready") return;
+    const key = `agent-guild:nonce:${did}:${room}`;
+    localStorage.setItem(key, dry.nonce);
+    const nonce = nextNonce(dry.nonce);
+    setDry({ nonce, normalized: dry.normalized, payload: createSigningPayload(room, nonce, dry.normalized) });
+    setPublishAttempted(false); setFinalConfirm(false); setRecoveryState("idle"); setError("");
   }
 
   async function verifyReview() {
@@ -1787,7 +1862,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft
         {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim() || !signingReady} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
         {dry?.signature && writesEnabled && !publishAttempted ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
-        {dry?.signature && writesEnabled && publishAttempted ? <div className="readback-retry"><strong>This signature will not be sent again.</strong><p>Only re-check Technocore for the same DID, nonce, exact text and result digest.</p><button className="button button-secondary" onClick={() => void verifyReadback()}>CHECK READ-BACK AGAIN</button></div> : null}
+        {dry?.signature && writesEnabled && publishAttempted ? <div className={`readback-retry recovery-${recoveryState}`} role="status" aria-live="polite"><strong>{recoveryState === "checking" ? "CHECKING WHETHER THE RESULT ARRIVED" : recoveryState === "outage" ? "TECHNOCORE IS TEMPORARILY UNAVAILABLE" : recoveryState === "absent" ? "NOT PUBLISHED · OLD SIGNATURE RETIRED" : "DELIVERY IS UNCONFIRMED"}</strong><p>{recoveryState === "outage" ? "Agent Guild will not resend. The artifact, tests, and exact draft remain safe while you wait." : recoveryState === "absent" ? "No matching receipt was found after bounded checks. Once Technocore is ready, create a fresh nonce and review a new signature." : "Agent Guild is checking the same DID, nonce, exact text, and result digest. It never resends during read-back."}</p><div className="recovery-actions"><button className="button button-secondary" disabled={recoveryState === "checking"} onClick={() => { protocol.recheck(); void verifyReadback(); }}>{recoveryState === "checking" ? "CHECKING…" : "CHECK STATUS + READ-BACK"}</button>{recoveryState === "absent" ? <button className="button button-primary" disabled={protocol.state !== "ready"} onClick={prepareFreshAttempt}>PREPARE A NEW SIGNATURE</button> : null}</div></div> : null}
         {dry?.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>Enable it only on reviewed staging, then obtain fresh approval for the exact message.</small></span></div> : null}
       </div>
       <div className="receipt-stage proof-stage-card">
