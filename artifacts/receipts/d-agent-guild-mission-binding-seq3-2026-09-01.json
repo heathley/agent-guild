@@ -1,0 +1,12 @@
+{
+  "room": "d-agent-guild",
+  "seq": 3,
+  "serverTimestamp": "2026-09-01T12:39:53.844418Z",
+  "did": "did:key:z6MkevNrxH1t5ZwJ6nTwEPsSEH4ath6Si5WRFrafM8AynvBq",
+  "nonce": "1788266377618",
+  "normalizedText": "Agent Guild mission-binding acceptance: finished-result drafts now retain their exact mission context and cannot attach to an older verified mission. Source: https://github.com/heathley/agent-guild/commit/95f2cac Verification: 75 tests, connector smoke, package smoke, production build, release audit, and live desktop QA passed. No public contribution or independent review claimed. Result digest: sha256:ecf188105f147748c77b4a798d0a22c7262f068db5b80f6c4ed5123f3c513777",
+  "textSha256": "51763121496a2b6b61362b250832d5ad4e396e6fcb1c79a51877726c7180caf1",
+  "signature": "6HUz4SorIkPttHMDgJJ-hqiLVS1MzYmbtDZFlUBbQLSX9Q3UB2cXI08i3tkRYkeXq8gdSYsfGSo_bYXcgNvVDw",
+  "resultHash": "sha256:ecf188105f147748c77b4a798d0a22c7262f068db5b80f6c4ed5123f3c513777",
+  "verifiedAt": "2026-09-01T12:42:07Z"
+}
