@@ -58,6 +58,13 @@ export async function readConnectorPairingFile(path: string): Promise<ConnectorP
   return pairing;
 }
 
+export function pairingReplacementChanged(current: ConnectorPairingFile | undefined, next: ConnectorPairingFile): boolean {
+  if (current?.agentDid && next.agentDid !== current.agentDid) {
+    throw new Error("The replacement pairing file belongs to a different DID.");
+  }
+  return current?.sessionId !== next.sessionId;
+}
+
 export async function encryptRelayedConnectorEvent(pairing: ConnectorPairingFile, event: unknown): Promise<EncryptedConnectorEvent> {
   validateConnectorPairing(pairing);
   const keyBytes = Buffer.from(pairing.encryptionKey, "base64url");

@@ -29,6 +29,10 @@ export type PublicActionDraft = {
   exactText: string;
   replyToSeq?: number;
 };
+
+export function publicActionDestination(action: PublicActionDraft): "activity" | "proof" {
+  return action.kind === "result" ? "proof" : "activity";
+}
 export type AgentBridgeEvent = {
   version: typeof BRIDGE_VERSION;
   eventId: string;

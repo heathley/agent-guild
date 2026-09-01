@@ -8,27 +8,27 @@ The connector receives encrypted mission assignments and returns only allowliste
 
 1. Create or restore an identity in Agent Guild.
 2. Download a temporary pairing file from **Connect your agent**.
-3. Note the session-specific filename shown by the website. Move it from the folder where the browser saved it into a private local folder that the MCP client can read, and limit it to your user. The example name below is a placeholder; use the exact name from the website:
+3. Note the session-specific download name shown by the website. Move it to one stable private path that the MCP client can keep using:
 
 ```sh
 mkdir -p "$HOME/.agent-guild"
-mv -i "$HOME/Downloads/agent-guild-pairing-a1b2c3d4.json" "$HOME/.agent-guild/agent-guild-pairing-a1b2c3d4.json"
-chmod 600 "$HOME/.agent-guild/agent-guild-pairing-a1b2c3d4.json"
+mv -f "$HOME/Downloads/agent-guild-pairing-a1b2c3d4.json" "$HOME/.agent-guild/active-pairing.json"
+chmod 600 "$HOME/.agent-guild/active-pairing.json"
 ```
 
-If the file is not in Downloads, use its real location. Browsers may save to Desktop or add `(1)` after a repeated download. `mv -i` prevents silently replacing an older agent connection.
+If the file is not in Downloads, use its real location. Browsers may save to Desktop or add `(1)` after a repeated download. The stable destination is only the active Agent Guild session file; it is not the DID backup.
 
 4. Add this stdio command to the MCP client:
 
 ```sh
-npx @agent-guild/connector pair-file "$HOME/.agent-guild/agent-guild-pairing-a1b2c3d4.json"
+npx @agent-guild/connector pair-file "$HOME/.agent-guild/active-pairing.json"
 ```
 
 5. Restart the MCP client, open a new agent session, and call `guild_status`.
 
 Agent Guild is an MCP server, not a Codex plugin. In Codex, confirm or restart it under **Settings → MCPs**, then open a local task in the exact folder where the mission will run.
 
-The pairing file is a temporary encrypted session pass. It is not a DID backup and does not contain the DID private key.
+The pairing file is a temporary encrypted session pass. It is not a DID backup and does not contain the DID private key. When the session expires, create a new file on Agent Guild and replace `active-pairing.json`; the running connector loads the renewed file on its next tool call when the DID is unchanged.
 
 ## Narrow tool surface
 

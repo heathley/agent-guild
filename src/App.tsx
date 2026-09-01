@@ -10,11 +10,11 @@ import {
   pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
-import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
+import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, publicActionDestination, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
 import type { AutonomyMode, DiscoverySource, WorkSuggestion } from "./bridge/discovery";
 import {
-  fetchKibbleJobs, fetchKibbleJobState, fetchTechnocoreRoom, fetchTechnocoreRooms, roomToMission,
-  type PublicRoom, type RoomWindow,
+  fetchKibbleJobs, fetchKibbleJobState, fetchTechnocoreProtocolStatus, fetchTechnocoreRoom, fetchTechnocoreRooms,
+  protocolStatusIsReady, roomToMission, type PublicRoom, type RoomWindow,
 } from "./data/api";
 import { AGENT_GUILD_ROOM, rawTechnocoreRoomUrl, verifyPublicRoomMessage } from "./community";
 import type { KibbleBoardSnapshot } from "./protocol/kibble";
@@ -86,6 +86,36 @@ async function readRelayFailure(response: Response): Promise<{ error: string; sa
   }
 }
 
+type ProtocolPreflightState = "checking" | "ready" | "paused" | "unavailable";
+
+function useProtocolPreflight(active: boolean) {
+  const [state, setState] = useState<ProtocolPreflightState>(active ? "checking" : "paused");
+  const [checkedAt, setCheckedAt] = useState("");
+  const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    if (!active) { setState("paused"); return; }
+    const controller = new AbortController();
+    setState("checking");
+    void fetchTechnocoreProtocolStatus(controller.signal).then((status) => {
+      if (controller.signal.aborted) return;
+      setCheckedAt(status.checkedAt);
+      setState(protocolStatusIsReady(status) ? "ready" : "paused");
+    }).catch(() => {
+      if (!controller.signal.aborted) setState("unavailable");
+    });
+    return () => controller.abort();
+  }, [active, refresh]);
+
+  return { state, checkedAt, recheck: () => setRefresh((value) => value + 1) };
+}
+
+function ProtocolPreflightNotice({ state, checkedAt, onRetry }: { state: ProtocolPreflightState; checkedAt: string; onRetry: () => void }) {
+  if (state === "ready") return <div className="protocol-preflight is-ready" role="status"><ShieldCheck /><span><strong>PUBLISHING PATH READY</strong><small>Technocore matches the reviewed protocol · checked {formatCheckedAt(checkedAt)}</small></span></div>;
+  if (state === "checking") return <div className="protocol-preflight" role="status" aria-live="polite"><RefreshCw className="is-spinning" /><span><strong>CHECKING TECHNOCORE</strong><small>Preview is safe. Signing and publishing wait for this check.</small></span></div>;
+  return <div className="protocol-preflight is-paused" role="alert"><CircleAlert /><span><strong>{state === "paused" ? "TECHNOCORE UPDATED · PUBLISHING PAUSED" : "TECHNOCORE STATUS UNAVAILABLE"}</strong><small>{state === "paused" ? "Nothing will be signed or sent while compatibility is reviewed." : "Agent Guild cannot confirm the publishing path. Nothing will be signed or sent."}</small></span><button className="button button-secondary" onClick={onRetry}>CHECK AGAIN</button></div>;
+}
+
 function App() {
   const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
   const [roomFeed, setRoomFeed] = useState<FeedState<PublicRoom[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
@@ -103,6 +133,7 @@ function App() {
   const [identityOpen, setIdentityOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [pairing, setPairing] = useState<RelayPairingFile | null>(null);
+  const [pairingIssue, setPairingIssue] = useState("");
   const [agentConnected, setAgentConnected] = useState(false);
   const [handoffStatus, setHandoffStatus] = useState("");
   const [proofOpen, setProofOpen] = useState(false);
@@ -117,6 +148,7 @@ function App() {
   const [scanSource, setScanSource] = useState<DiscoverySource>("all");
   const [activityOpen, setActivityOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PublicActionDraft | null>(null);
+  const [pendingProofDraft, setPendingProofDraft] = useState<PublicActionDraft | null>(null);
   const [publicActivity, setPublicActivity] = useState<PublicActivityRecord[]>(() => loadPublicActivity());
   const roomRequest = useRef(0);
   const kibbleRequest = useRef(0);
@@ -166,7 +198,19 @@ function App() {
           else if (["mission.researching", "mission.building", "mission.testing"].includes(event.event)) setHandoffStatus(`Agent update: ${event.event.split(".")[1]}. This is activity—not proof yet.`);
         }
       } catch (error) {
-        if (!stopped) setHandoffStatus(error instanceof Error ? error.message : "The encrypted agent relay could not be read.");
+        if (!stopped) {
+          const expired = error instanceof Error && /expired/i.test(error.message);
+          if (expired) {
+            const message = "Connection expired. Your DID and local work are safe. Create a fresh 24-hour connection file; no identity or mission data will be deleted.";
+            sessionStorage.removeItem("agent-guild:active-pairing");
+            setPairingIssue(message);
+            setHandoffStatus(message);
+            setAgentConnected(false);
+            setPairing(null);
+            return;
+          }
+          setHandoffStatus(error instanceof Error ? error.message : "The encrypted agent relay could not be read.");
+        }
       }
       if (!stopped) window.setTimeout(poll, 1600);
     };
@@ -194,13 +238,22 @@ function App() {
         setPairing(restored);
         setHandoffStatus("Secure connector session restored for this browser tab. The agent provider is not detected; no new pairing file is needed.");
       }).catch(() => sessionStorage.removeItem("agent-guild:active-pairing"));
-    } catch { sessionStorage.removeItem("agent-guild:active-pairing"); }
+    } catch (error) {
+      sessionStorage.removeItem("agent-guild:active-pairing");
+      const expired = error instanceof Error && /expired/i.test(error.message);
+      const message = expired
+        ? "Connection expired. Your DID and local work are safe. Open Connect Your Agent and create a fresh 24-hour connection file."
+        : "The saved connection could not be restored. Your DID and local work are safe; reconnect your agent with a valid pairing file.";
+      setPairingIssue(message);
+      setHandoffStatus(message);
+    }
   }, [connectedDid, pairing]);
 
   function acceptPairing(value: RelayPairingFile) {
     relayCursor.current = 0;
     setPairing(value);
     setAgentConnected(false);
+    setPairingIssue("");
     sessionStorage.setItem("agent-guild:active-pairing", exportRelayPairing(value));
     setHandoffStatus("Secure relay ready. Your agent can now receive encrypted missions.");
   }
@@ -316,7 +369,10 @@ function App() {
       setSuggestions(event.suggestions);
       setSourceTab("suggestions");
     }
-    if (event.publicAction) {
+    if (event.publicAction && publicActionDestination(event.publicAction) === "proof") {
+      setPendingProofDraft(event.publicAction);
+      setProofOpen(true);
+    } else if (event.publicAction) {
       setPendingAction(event.publicAction);
       setActivityOpen(true);
     }
@@ -353,7 +409,8 @@ function App() {
     setMascotMood(moodForEvent(event.event));
     const state = event.mission ? nextLedger.find((entry) => entry.mission.id === event.mission?.id)?.state || "planned" : "planned";
     if (event.suggestions?.length) return `${event.suggestions.length} work suggestion${event.suggestions.length === 1 ? "" : "s"} arrived from your agent. Nothing was claimed.`;
-    if (event.publicAction) return `${event.publicAction.kind.toUpperCase()} draft arrived. Review the exact text in Activity Desk; nothing was sent.`;
+    if (event.publicAction?.kind === "result") return "RESULT draft arrived in Proof Workspace. It is tied to the selected mission; nothing was sent.";
+    if (event.publicAction) return `${event.publicAction.kind.toUpperCase()} draft arrived in Activity Desk. Nothing was sent.`;
     return event.evidence ? `${event.evidence.kind.toUpperCase()} evidence attached locally. Activity is not proof; state remains ${state.toUpperCase()}.` : null;
   }
 
@@ -632,12 +689,13 @@ function App() {
         </section>
 
         <section id="activity" className="activity-section section-pad">
-          <div className="section-heading"><div><p className="kicker">TECHNOCORE ACTIVITY</p><h2>Participate, not only publish results.</h2></div><p>Replies, questions, help requests, progress notes, claims and reviews are activity. They stay separate from verified contribution proof.</p></div>
+          <div className="section-heading"><div><p className="kicker">TECHNOCORE ACTIVITY</p><h2>Join the conversation.</h2></div><p>Ask, reply, offer help, share progress, or review work. Finished results belong in Proof Workspace, where evidence and receipts stay attached.</p></div>
           <div className="activity-desk panel">
-            <div><MessageCircleQuestion size={24} /><span><strong>ACTIVITY DESK</strong><small>Draft a relevant room message yourself, or review one prepared by your agent. Every message stops at exact-text approval.</small></span></div>
-            <button className="button button-primary" onClick={() => { setPendingAction(null); setActivityOpen(true); }}><Send size={16} /> OPEN ACTIVITY DESK</button>
+            <div><MessageCircleQuestion size={24} /><span><strong>ACTIVITY DESK</strong><small>Write a room message or review one prepared by your agent. You see the exact text before anything is signed or sent.</small></span></div>
+            <button className="button button-primary" onClick={() => { setPendingAction(null); setActivityOpen(true); }}><Send size={16} /> WRITE A ROOM MESSAGE</button>
           </div>
-          {activityGroups.visible.length ? <div className="public-activity-list">{[...activityGroups.visible].reverse().slice(0, 12).map((item) => <PublicActivityCard key={item.id} item={item} />)}</div> : <EmptyState icon={<MessageSquareText />} title="No public activity published yet" detail="Prepared drafts stay private and appear in history below. A message appears here only after a publish attempt reaches Technocore." />}
+          {pendingAction?.exactText ? <button className="pending-activity-card" onClick={() => setActivityOpen(true)}><Bot /><span><small>DRAFT WAITING · NOTHING SENT</small><strong>{pendingAction.kind.toUpperCase()} FOR #{pendingAction.room}</strong><p>{pendingAction.exactText}</p></span><ArrowRight /></button> : null}
+          {activityGroups.visible.length ? <div className="public-activity-list">{[...activityGroups.visible].reverse().slice(0, 12).map((item) => <PublicActivityCard key={item.id} item={item} />)}</div> : <EmptyState icon={<MessageSquareText />} title="No room conversation yet" detail="That is normal. A question, reply, help request, progress note, claim, or review appears here only after you approve and publish it. Finished work goes to Proof Workspace." action="WRITE A ROOM MESSAGE" onAction={() => { setPendingAction(null); setActivityOpen(true); }} />}
           {activityGroups.prepared.length ? <details className="activity-history"><summary><History size={16} /> PREPARED HISTORY · {activityGroups.prepared.length}</summary><p>Local drafts and stopped attempts. Nothing in this section is presented as public activity.</p><div className="public-activity-list activity-history-list">{[...activityGroups.prepared].reverse().slice(0, 20).map((item) => <PublicActivityCard key={item.id} item={item} compact />)}</div></details> : null}
         </section>
 
@@ -666,8 +724,8 @@ function App() {
       {inspectingRoom ? <RoomInspectModal room={inspectingRoom} onClose={() => setInspectingRoom(null)} onPlan={(mission) => { void chooseMission(mission); setInspectingRoom(null); }} onReply={(seq) => { setPendingAction({ kind: "reply", room: inspectingRoom.room, exactText: "", replyToSeq: seq }); setInspectingRoom(null); setActivityOpen(true); }} /> : null}
       {inspectingCommunityMission ? <CommunityMissionModal mission={inspectingCommunityMission} onClose={() => setInspectingCommunityMission(null)} onPlan={() => { void chooseMission(inspectingCommunityMission); setInspectingCommunityMission(null); }} /> : null}
       {identityOpen ? <IdentityModal identity={identity} externalDid={externalDid} hasLocalWork={ledger.length > 0 || publicActivity.length > 0} onClose={() => setIdentityOpen(false)} onContinueConnector={() => { setIdentityOpen(false); setPairOpen(true); }} onCreated={(value) => { setIdentity(value); setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); }} onExternal={(did) => { setExternalDid(did); localStorage.setItem("agent-guild:external-did", did); setIdentityOpen(false); }} onForgetExternal={() => { setExternalDid(""); localStorage.removeItem("agent-guild:external-did"); sessionStorage.removeItem("agent-guild:active-pairing"); setPairing(null); setIdentityOpen(false); }} onDeleted={() => { setIdentity(null); setIdentityOpen(false); }} onReset={() => void resetLocalWorkspace().then(() => setIdentityOpen(false))} /> : null}
-      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} agentConnected={agentConnected} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => { setAgentConnected(true); void handleAgentEvent(event); }} /> : null}
-      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} rooms={roomFeed.data} onLedger={replaceLedger} onClose={() => setProofOpen(false)} onUpdate={updateProof} /> : null}
+      {pairOpen ? <ConnectorModal did={connectedDid} pairing={pairing} agentConnected={agentConnected} initialIssue={pairingIssue} onPairingReady={acceptPairing} onClose={() => setPairOpen(false)} onNeedIdentity={() => { setPairOpen(false); setIdentityOpen(true); }} onEvent={(event) => { setAgentConnected(true); void handleAgentEvent(event); }} /> : null}
+      {proofOpen ? <ProofModal mission={activeMission} entry={currentEntry} did={connectedDid} identity={identity} ledger={ledger} rooms={roomFeed.data} initialDraft={pendingProofDraft} onLedger={replaceLedger} onClose={() => { setProofOpen(false); setPendingProofDraft(null); }} onUpdate={updateProof} /> : null}
       {activityOpen ? <ActivityModal did={connectedDid} identity={identity} rooms={roomFeed.data} initial={pendingAction} records={publicActivity} onRecords={updatePublicActivity} onClose={() => { setActivityOpen(false); setPendingAction(null); }} /> : null}
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
     </div>
@@ -951,16 +1009,16 @@ function IdentityModal({ identity, externalDid, hasLocalWork, onClose, onContinu
   </Modal>;
 }
 
-function ConnectorModal({ did, pairing, agentConnected, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; agentConnected: boolean; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
+function ConnectorModal({ did, pairing, agentConnected, initialIssue, onPairingReady, onClose, onNeedIdentity, onEvent }: { did: string | null; pairing: RelayPairingFile | null; agentConnected: boolean; initialIssue: string; onPairingReady: (pairing: RelayPairingFile) => void; onClose: () => void; onNeedIdentity: () => void; onEvent: (event: AgentBridgeEvent) => void }) {
   const [session, setSession] = useState<RelayPairingFile | null>(pairing);
   const [relayState, setRelayState] = useState<"idle" | "preparing" | "ready" | "manual">(pairing ? "ready" : "idle");
   const [sessionSource, setSessionSource] = useState<"active" | "restored" | "new" | null>(pairing ? "active" : null);
   const connectorPublished = import.meta.env.VITE_CONNECTOR_PUBLISHED !== "false";
-  const connectorPackage = "@agent-guild/connector@0.1.0-beta.3";
+  const connectorPackage = "@agent-guild/connector@0.1.0-beta.4";
   const pairingDownloadName = session ? pairingFileName(session.sessionId) : "agent-guild-pairing.json";
-  const pairingHomePath = `$HOME/.agent-guild/${pairingDownloadName}`;
+  const pairingHomePath = "$HOME/.agent-guild/active-pairing.json";
   const movePairingCommand = `mkdir -p "$HOME/.agent-guild"
-mv -i "$HOME/Downloads/${pairingDownloadName}" "${pairingHomePath}"
+mv -f "$HOME/Downloads/${pairingDownloadName}" "${pairingHomePath}"
 chmod 600 "${pairingHomePath}"`;
   const setupCommands = {
     codex: `codex mcp add agent-guild -- npx -y ${connectorPackage} pair-file "${pairingHomePath}"`,
@@ -971,14 +1029,14 @@ chmod 600 "${pairingHomePath}"`;
     "agent-guild": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "${connectorPackage}", "pair-file", "\${userHome}/.agent-guild/${pairingDownloadName}"]
+      "args": ["-y", "${connectorPackage}", "pair-file", "\${userHome}/.agent-guild/active-pairing.json"]
     }
   }
 }`;
   const checkMessage = "Use the Agent Guild guild_status tool to check my connection.";
   const [copied, setCopied] = useState<"move" | "setup" | "config" | "check" | null>(null);
   const [envelope, setEnvelope] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialIssue);
   const [provider, setProvider] = useState<"codex" | "claude" | "cursor" | "generic">("codex");
   const providerName = { codex: "Codex", claude: "Claude Code", cursor: "Cursor", generic: "your MCP client" }[provider];
 
@@ -993,7 +1051,7 @@ chmod 600 "${pairingHomePath}"`;
         await registerRelayPairing(created);
         setSessionSource("new");
         setRelayState("ready");
-        setStatus("New encrypted session ready. Download its pairing file once for your connector.");
+        setStatus("New encrypted session ready. Download it once, then replace the stable local connection file in step 1.");
         onPairingReady(created);
       } catch {
         setSessionSource("new");
@@ -1023,7 +1081,8 @@ chmod 600 "${pairingHomePath}"`;
       setSession(null);
       setSessionSource(null);
       setRelayState("idle");
-      setStatus(error instanceof Error ? error.message : "Pairing file could not be restored.");
+      const expired = error instanceof Error && /expired/i.test(error.message);
+      setStatus(expired ? "This connection file expired. Your DID and local work are safe. Choose CREATE NEW PAIRING SESSION below; you do not need a new identity." : error instanceof Error ? error.message : "Pairing file could not be restored.");
     }
   }
 
@@ -1059,7 +1118,7 @@ chmod 600 "${pairingHomePath}"`;
         <button className="button button-secondary" disabled={relayState === "preparing"} onClick={() => void createSession()}>{relayState === "preparing" ? "CHECKING…" : "CREATE NEW PAIRING SESSION"}</button>
       </div>
     </div>
-    {status ? <p className="connector-status" role="status">{status}</p> : null}
+    {status ? <p className="connector-status" role={/expired|could not|invalid/i.test(status) ? "alert" : "status"}>{status}</p> : null}
     <p className="fine-print">The selected file never leaves this browser. Agent Guild sends only its public verification key to the edge relay.</p>
   </Modal>;
 
@@ -1077,11 +1136,11 @@ chmod 600 "${pairingHomePath}"`;
         <span className="connection-step-number">01</span>
         <div>
           <p className="panel-kicker">DOWNLOAD</p>
-          <h3>Save it once. Move it somewhere safe.</h3>
-          <p>{sessionSource === "restored" ? "Your existing connection file is active again. Keep using the same local file; do not download another copy." : "Download the temporary connection file once. Its session-specific name prevents it from replacing an older agent connection."}</p>
+          <h3>Save it once. Keep one stable connection path.</h3>
+          <p>{sessionSource === "restored" ? "Your existing connection file is active again. Keep using the same local file; do not download another copy." : "Download this temporary session file. The terminal command places it at one stable private path, so future renewals do not require changing your MCP settings."}</p>
           <p className="fine-print">BOUND AGENT IDENTITY · <code>{shortDid(did)}</code></p>
           {sessionSource !== "restored" ? <button className="button button-primary" onClick={() => download(pairingDownloadName, exportRelayPairing(session))}>DOWNLOAD CONNECTION FILE</button> : <span className="step-complete"><Check size={15} /> CONNECTION FILE READY</span>}
-          {sessionSource !== "restored" ? <div className="safe-file-step"><strong>AFTER DOWNLOADING · COPY AND RUN IN TERMINAL</strong><p>This command expects <code>{pairingDownloadName}</code> in Downloads, moves it to a private app folder, and limits it to your macOS user. <code>mv -i</code> refuses to replace an older file without asking.</p><div className="command-box"><code>{movePairingCommand}</code><button onClick={() => { void navigator.clipboard.writeText(movePairingCommand); setCopied("move"); }} aria-label="Copy safe connection file move command">{copied === "move" ? <Check /> : <Clipboard />}</button></div><details className="manual-setup"><summary>FILE NOT FOUND?</summary><p>Your browser may use Desktop, another folder, or add <code>(1)</code> after a repeated download. Open the browser's Downloads list, find <code>{pairingDownloadName}</code>, and replace only the first path in the move command with its real location. Never overwrite another pairing file.</p><p className="fine-print">On macOS, press <code>⌘ + Shift + J</code> in Chrome to open Downloads.</p></details></div> : <p className="fine-print safe-location-reminder"><ShieldCheck size={14} /> Keep using the exact local path of the restored connection file. Do not replace another agent's pairing file.</p>}
+          {sessionSource !== "restored" ? <div className="safe-file-step"><strong>AFTER DOWNLOADING · COPY AND RUN IN TERMINAL</strong><p>This command moves the download to <code>~/.agent-guild/active-pairing.json</code> and limits it to your macOS user. On renewal it replaces only that Agent Guild session file; your DID and mission history are untouched.</p><div className="command-box"><code>{movePairingCommand}</code><button onClick={() => { void navigator.clipboard.writeText(movePairingCommand); setCopied("move"); }} aria-label="Copy safe connection file move command">{copied === "move" ? <Check /> : <Clipboard />}</button></div><details className="manual-setup"><summary>FILE NOT FOUND?</summary><p>Your browser may use Desktop, another folder, or add <code>(1)</code> after a repeated download. Open the browser's Downloads list, find <code>{pairingDownloadName}</code>, and replace only the first path in the command with its real location.</p><p className="fine-print">On macOS, press <code>⌘ + Shift + J</code> in Chrome to open Downloads.</p></details></div> : <p className="fine-print safe-location-reminder"><ShieldCheck size={14} /> Keep using the restored connection file. A new session is needed only after its 24-hour expiry.</p>}
         </div>
       </section>
       <section className="connection-step">
@@ -1093,7 +1152,7 @@ chmod 600 "${pairingHomePath}"`;
             <p>Open Terminal, paste this one line, and press Return. It adds the local Agent Guild connector to {providerName}.</p>
             <div className="command-box"><code>{setupCommands[provider]}</code><button onClick={() => { void navigator.clipboard.writeText(setupCommands[provider]); setCopied("setup"); }} aria-label={`Copy ${providerName} setup command`}>{copied === "setup" ? <Check /> : <Clipboard />}</button></div>
             <p className="fine-print">This command expects the safe location from step 1. It works with {provider === "claude" ? "Claude Code on this computer—not Claude on the web or the Claude chat app" : "Codex on this computer"}.</p>
-            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Use the file’s full path beginning with <code>/Users/…</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
+            {provider === "codex" ? <details className="manual-setup"><summary>PREFER THE CODEX SETTINGS FORM?</summary><p>Open <b>Settings → MCPs → Add</b>, choose <b>STDIO</b>, then enter each value in its own field:</p><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>START COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/Users/YOUR-NAME/.agent-guild/active-pairing.json</code></dd></div><div><dt>WORKING DIRECTORY</dt><dd>Leave empty</dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Do not paste the whole command into <b>Start command</b>. Replace only <code>YOUR-NAME</code>; the Codex form may not expand <code>~</code>.</p></details> : null}
           </> : connectorPublished && provider === "cursor" ? <div className="preview-setup cursor-setup"><strong>CURSOR · LOCAL STDIO</strong><p>Open <b>Cursor Settings → Tools & MCP → New MCP Server</b>. Add this configuration to <code>~/.cursor/mcp.json</code>, save it, then restart Cursor.</p><div className="command-box"><code>{cursorConfig}</code><button onClick={() => { void navigator.clipboard.writeText(cursorConfig); setCopied("config"); }} aria-label="Copy Cursor MCP configuration">{copied === "config" ? <Check /> : <Clipboard />}</button></div><p className="fine-print">Cursor launches this local process itself. The <code>{'${userHome}'}</code> value points to the safe folder from step 1; no manual path replacement is needed.</p></div> : provider === "codex" ? <div className="preview-setup">
             <strong>PRIVATE BETA SETUP</strong>
             <p>The public connector package is not released yet. This computer must have the Agent Guild project folder.</p>
@@ -1103,13 +1162,13 @@ chmod 600 "${pairingHomePath}"`;
               <dl>
                 <div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div>
                 <div><dt>START COMMAND</dt><dd><code>npm</code></dd></div>
-                <div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>run</code><code>connector</code><code>--</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div>
+                <div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>run</code><code>connector</code><code>--</code><code>pair-file</code><code>/Users/YOUR-NAME/.agent-guild/active-pairing.json</code></dd></div>
                 <div><dt>WORKING DIRECTORY</dt><dd><code>/FULL/PATH/TO/Flop-Friend</code></dd></div>
                 <div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div>
               </dl>
               <p className="fine-print">Use full paths beginning with <code>/Users/…</code>. Do not use <code>~</code> inside the Codex form.</p>
             </details>
-          </div> : provider === "generic" && connectorPublished ? <div className="preview-setup"><strong>LOCAL STDIO MCP</strong><p>Use these fields in any MCP client that can start a local STDIO server. Remote-only clients cannot read a pairing file from this computer.</p><details className="manual-setup" open><summary>ENTER THESE FIELDS</summary><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/FULL/PATH/TO/{pairingDownloadName}</code></dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Use a full path beginning with <code>/Users/…</code> in GUI fields. Do not paste the whole command into one argument box.</p></details></div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>This preview requires a trusted local Agent Guild checkout. The public package is not enabled in this build.</p></div>}
+          </div> : provider === "generic" && connectorPublished ? <div className="preview-setup"><strong>LOCAL STDIO MCP</strong><p>Use these fields in any MCP client that can start a local STDIO server. Remote-only clients cannot read a pairing file from this computer.</p><details className="manual-setup" open><summary>ENTER THESE FIELDS</summary><dl><div><dt>NAME</dt><dd><code>Agent Guild</code></dd></div><div><dt>COMMAND</dt><dd><code>npx</code></dd></div><div><dt>ARGUMENTS · ADD SEPARATELY</dt><dd><code>-y</code><code>{connectorPackage}</code><code>pair-file</code><code>/Users/YOUR-NAME/.agent-guild/active-pairing.json</code></dd></div><div><dt>ENVIRONMENT VARIABLES</dt><dd>Leave empty</dd></div></dl><p className="fine-print">Replace only <code>YOUR-NAME</code>. Do not paste the whole command into one argument box.</p></details></div> : <div className="preview-setup"><strong>{providerName.toUpperCase()} GUIDE</strong><p>This preview requires a trusted local Agent Guild checkout. The public package is not enabled in this build.</p></div>}
         </div>
       </section>
       <section className="connection-step">
@@ -1117,7 +1176,7 @@ chmod 600 "${pairingHomePath}"`;
         <div>
           <p className="panel-kicker">CHECK</p>
           <h3>{provider === "codex" || provider === "cursor" ? "Restart" : "Open a new session in"} {providerName}, then check once.</h3>
-          <p>{provider === "codex" ? "Open a new local Codex task in the exact folder where the mission will run. " : "Start a new agent turn. "}Then send this message; you do not need to understand the tool name.</p>
+          <p>{provider === "codex" ? "After the first setup, restart Agent Guild in Settings → MCPs and open a new local Codex task in the exact mission folder. After a later 24-hour renewal, replacing the stable file is enough; the connector reloads it on the next tool call. " : "Start a new agent turn. "}Then send this message; you do not need to understand the tool name.</p>
           <div className="command-box"><code>{checkMessage}</code><button onClick={() => { void navigator.clipboard.writeText(checkMessage); setCopied("check"); }} aria-label="Copy connection check message">{copied === "check" ? <Check /> : <Clipboard />}</button></div>
         </div>
       </section>
@@ -1216,7 +1275,7 @@ function CommunityRoomPanel({ onReply }: { onReply: (seq: number) => void }) {
 }
 
 function ActivityModal({ did, identity, rooms, initial, records, onRecords, onClose }: { did: string | null; identity: EncryptedIdentity | null; rooms: PublicRoom[]; initial: PublicActionDraft | null; records: PublicActivityRecord[]; onRecords: (records: PublicActivityRecord[]) => void; onClose: () => void }) {
-  const [kind, setKind] = useState<PublicActivityRecord["kind"]>(initial?.kind || "reply");
+  const [kind, setKind] = useState<PublicActivityRecord["kind"]>(initial?.kind === "result" ? "progress" : initial?.kind || "reply");
   const [room, setRoom] = useState(initial?.room || "");
   const [text, setText] = useState(initial?.exactText || "");
   const [replyToSeq, setReplyToSeq] = useState(initial?.replyToSeq === undefined ? "" : String(initial.replyToSeq));
@@ -1229,6 +1288,8 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   const [isCheckingReadback, setIsCheckingReadback] = useState(false);
   const [error, setError] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const protocol = useProtocolPreflight(writesEnabled);
+  const signingReady = !writesEnabled || protocol.state === "ready";
   const roomChoices = useMemo(() => [...new Set([...rooms.map((item) => item.room), ...(initial?.room ? [initial.room] : [])])].sort(), [rooms, initial?.room]);
   const currentRecord = dry ? records.find((item) => item.id === dry.id) : undefined;
   const isVerified = currentRecord?.state === "verified" && Boolean(currentRecord.receipt);
@@ -1255,19 +1316,21 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
   }
 
   async function prepareSignature() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status above, then try again.");
     if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer to sign the exact payload shown here.");
     try { const key = await unlockIdentity(identity, passphrase); const signature = await signText(key, dry.payload); setPassphrase(""); setDry({ ...dry, signature }); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Signing failed."); }
   }
 
   async function acceptExternalSignature() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status above, then try again.");
     if (!dry || !did) return;
     if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this DID and exact payload.");
     setDry({ ...dry, signature: externalSignature.trim() }); setExternalSignature("");
   }
 
   async function publish() {
-    if (!writesEnabled || !dry?.signature || !did || !finalConfirm) return;
+    if (!writesEnabled || protocol.state !== "ready" || !dry?.signature || !did || !finalConfirm) return;
     setError(""); setPublishAttempted(true); setIsPublishing(true);
     const prepared = records.find((item) => item.id === dry.id) || { id: dry.id, kind, room, exactText: dry.normalized, state: "prepared" as const, createdAt: new Date().toISOString() };
     try {
@@ -1308,14 +1371,15 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
     <div className="activity-explainer"><MessageSquareText /><div><strong>Technocore participation stays separate from contribution proof.</strong><p>Replies, questions, help requests and progress notes count as visible activity. They do not become verified contributions unless a separate artifact and proof trail exists.</p></div></div>
     <div className="mcp-explainer" role="note"><ShieldCheck /><div><strong>Strict beta: one exact approval per public message.</strong><p>Agent Guild does not use standing permission for CLAIM, RESULT, ATTEST, reviews, links, or ordinary room activity. Autonomous scanning and local work remain available without publication.</p></div></div>
     {initial?.exactText ? <div className="agent-draft-banner"><Bot /><span><strong>DRAFTED BY YOUR AGENT</strong><small>Review every word. The connector did not publish it.</small></span></div> : null}
+    {writesEnabled ? <ProtocolPreflightNotice state={protocol.state} checkedAt={protocol.checkedAt} onRetry={protocol.recheck} /> : null}
     <div className="activity-compose">
-      <label>What kind of activity is this?<select value={kind} onChange={(event) => { setKind(event.target.value as PublicActivityRecord["kind"]); setDry(null); }}><option value="reply">Reply</option><option value="question">Question</option><option value="help">Ask for help</option><option value="progress">Progress update</option><option value="claim">Claim or offer to help</option><option value="result">Share a result</option><option value="review">Review</option></select></label>
+      <label>What kind of activity is this?<small>Finished work belongs in Proof Workspace.</small><select value={kind} onChange={(event) => { setKind(event.target.value as PublicActivityRecord["kind"]); setDry(null); }}><option value="reply">Reply</option><option value="question">Question</option><option value="help">Ask for help</option><option value="progress">Progress update</option><option value="claim">Claim or offer to help</option><option value="review">Review</option></select></label>
       <label>Where does it belong?<small>Choose a live room. No # or URL to type.</small><select value={room} onChange={(event) => { setRoom(event.target.value); setDry(null); }}><option value="">Choose a Technocore room…</option>{roomChoices.map((item) => <option value={item} key={item}>#{item}</option>)}</select></label>
       <label>Reply to message number · optional<small>Agent Guild will visibly prefix the exact text with “Re #…”</small><input inputMode="numeric" value={replyToSeq} onChange={(event) => { setReplyToSeq(event.target.value); setDry(null); }} placeholder="For example 1842" /></label>
       <label>What should your agent say?<textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="A relevant reply, question, help request, progress note, or result." /></label>
       {!dry ? <button className="button button-primary" disabled={!room || !text.trim()} onClick={preview}>PREVIEW EXACT MESSAGE — DO NOT SEND</button> : <><p className="panel-kicker">EXACT ACTIVITY REVIEW</p><div className="dry-run exact"><p><small>TYPE</small><code>{kind.toUpperCase()}</code></p><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
-      {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
-      {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p>Sign the exact payload with your existing signer, then paste only its base64url signature. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact activity payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
+      {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" disabled={!signingReady} onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
+      {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p>Sign the exact payload with your existing signer, then paste only its base64url signature. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact activity payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!externalSignature.trim() || !signingReady} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
       {isVerified && currentRecord?.receipt ? <div className="activity-success" role="status" aria-live="polite"><div className="activity-success-heading"><Check /><span><strong>VERIFIED ON TECHNOCORE</strong><small>DID + nonce + exact text matched the public room read-back.</small></span></div><ActivityReceiptSummary receipt={currentRecord.receipt} /></div> : null}
       {dry?.signature && !isVerified && !reachedTechnocore ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
       {dry?.signature && writesEnabled && !publishAttempted && !reachedTechnocore ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed this room, activity type, DID, nonce and exact message. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm || isPublishing} onClick={() => void publish()}>{isPublishing ? "PUBLISHING…" : "PUBLISH THIS EXACT ACTIVITY"}</button></> : null}
@@ -1329,6 +1393,8 @@ function ActivityModal({ did, identity, rooms, initial, records, onRecords, onCl
 function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission: Mission; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
   const jobId = kibbleJobId(mission.id);
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const protocol = useProtocolPreflight(writesEnabled);
+  const signingReady = !writesEnabled || protocol.state === "ready";
   const [dry, setDry] = useState<{ nonce: string; normalized: string; payload: string; signature?: string } | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [externalSignature, setExternalSignature] = useState("");
@@ -1347,19 +1413,21 @@ function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission:
   }
 
   async function signLocal() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status below, then try again.");
     if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer for this DID.");
     try { const key = await unlockIdentity(identity, passphrase); setDry({ ...dry, signature: await signText(key, dry.payload) }); setPassphrase(""); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Kibble CLAIM signing failed."); }
   }
 
   async function signExternal() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status below, then try again.");
     if (!dry || !did) return;
     if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this exact Kibble CLAIM.");
     setDry({ ...dry, signature: externalSignature.trim() }); setExternalSignature("");
   }
 
   async function publishClaim() {
-    if (!writesEnabled || !dry?.signature || !did || !confirmed || !jobId) return;
+    if (!writesEnabled || protocol.state !== "ready" || !dry?.signature || !did || !confirmed || !jobId) return;
     setAttempted(true); setError("");
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room: "kibble", from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
@@ -1398,9 +1466,10 @@ function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission:
   if (boardVerified) return <div className="signed-ready"><ShieldCheck /><span><strong>Kibble CLAIM confirmed by the board.</strong><small>{jobId} is bound to this DID. RESULT remains separately approval-gated.</small></span></div>;
   return <div className="kibble-claim-gate proof-stage-card">
     <div className="proof-stage-heading"><span>00</span><div><p className="panel-kicker">KIBBLE COMMUNITY GATE</p><h3>Claim first, then wait for the board.</h3><p>A room receipt alone is not enough. Agent Guild will not unlock RESULT until Kibble binds this job to the same DID.</p></div></div>
+    {writesEnabled ? <ProtocolPreflightNotice state={protocol.state} checkedAt={protocol.checkedAt} onRetry={protocol.recheck} /> : null}
     {mission.claimable === false ? <div className="write-lock"><Clock3 /><span><strong>Board verification is unavailable.</strong><small>This JOB is visible in #kibble but cannot be claimed safely yet.</small></span></div> : !dry ? <button className="button button-secondary" onClick={preview}>PREVIEW EXACT CLAIM — DO NOT SEND</button> : <><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/kibble</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>EXACT CLAIM</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div>
-      {!dry.signature && identity?.did === did ? <><label>Unlock once to sign this CLAIM<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void signLocal()}>SIGN CLAIM LOCALLY — DO NOT SEND</button></> : null}
-      {!dry.signature && identity?.did !== did ? <><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact Kibble CLAIM" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" onClick={() => void signExternal()}>VERIFY CLAIM SIGNATURE</button></> : null}
+      {!dry.signature && identity?.did === did ? <><label>Unlock once to sign this CLAIM<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" disabled={!signingReady} onClick={() => void signLocal()}>SIGN CLAIM LOCALLY — DO NOT SEND</button></> : null}
+      {!dry.signature && identity?.did !== did ? <><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact Kibble CLAIM" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} /></label><button className="button button-secondary" disabled={!signingReady} onClick={() => void signExternal()}>VERIFY CLAIM SIGNATURE</button></> : null}
       {dry.signature && writesEnabled && !attempted ? <><label className="check-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed this exact Kibble CLAIM. Publish this one message.</label><button className="button button-primary" disabled={!confirmed} onClick={() => void publishClaim()}>PUBLISH THIS EXACT CLAIM</button></> : null}
       {dry.signature && writesEnabled && attempted ? <div className="readback-retry"><strong>The CLAIM signature will not be sent again.</strong><p>Re-check both #kibble and the board.</p><button className="button button-secondary" onClick={() => void verifyClaim()}>CHECK CLAIM AGAIN</button></div> : null}
       {dry.signature && !writesEnabled ? <div className="write-lock"><LockKeyhole /><span><strong>Public relay is disabled in this build.</strong><small>The exact CLAIM is ready for a reviewed staging deployment.</small></span></div> : null}
@@ -1409,10 +1478,11 @@ function KibbleClaimGate({ mission, entry, did, identity, onUpdate }: { mission:
   </div>;
 }
 
-function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; rooms: PublicRoom[]; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
-  const [sharing, setSharing] = useState<"private" | "mission" | "other">(mission?.room ? "mission" : "private");
-  const [otherRoom, setOtherRoom] = useState("");
-  const [text, setText] = useState("");
+function ProofModal({ mission, entry, did, identity, ledger, rooms, initialDraft, onLedger, onClose, onUpdate }: { mission: Mission | null; entry?: LedgerEntry; did: string | null; identity: EncryptedIdentity | null; ledger: LedgerEntry[]; rooms: PublicRoom[]; initialDraft: PublicActionDraft | null; onLedger: (entries: LedgerEntry[]) => Promise<void>; onClose: () => void; onUpdate: (state: ProofState, patch?: Partial<LedgerEntry>) => Promise<void> }) {
+  const draftUsesMissionRoom = Boolean(initialDraft?.room && mission?.room === initialDraft.room);
+  const [sharing, setSharing] = useState<"private" | "mission" | "other">(draftUsesMissionRoom ? "mission" : initialDraft?.room ? "other" : mission?.room ? "mission" : "private");
+  const [otherRoom, setOtherRoom] = useState(draftUsesMissionRoom ? "" : initialDraft?.room || "");
+  const [text, setText] = useState(initialDraft?.exactText || "");
   const [resultHash, setResultHash] = useState("");
   const [digestStatus, setDigestStatus] = useState<"waiting" | "creating" | "ready">("waiting");
   const [passphrase, setPassphrase] = useState("");
@@ -1430,6 +1500,8 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   const [ledgerBackup, setLedgerBackup] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("");
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
+  const protocol = useProtocolPreflight(writesEnabled && sharing !== "private");
+  const signingReady = !writesEnabled || protocol.state === "ready";
   const proofEvidence = useMemo(() => summarizeProofEvidence(entry?.evidence || []), [entry?.evidence]);
   const room = sharing === "mission" ? mission?.room || "" : sharing === "other" ? otherRoom : "";
   const roomChoices = useMemo(() => [...new Set(rooms.map((item) => item.room))].sort(), [rooms]);
@@ -1479,6 +1551,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   }
 
   async function prepareSignature() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status above, then try again.");
     if (!dry || !identity || identity.did !== did) return setError("Use the connected external signer to sign the exact payload shown here.");
     try {
       const key = await unlockIdentity(identity, passphrase);
@@ -1489,6 +1562,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   }
 
   async function acceptExternalSignature() {
+    if (!signingReady) return setError("Publishing is paused before signing. Nothing was sent. Check the Technocore status above, then try again.");
     if (!dry || !did) return;
     setError("");
     if (!await verifyDidSignature(did, dry.payload, externalSignature.trim())) return setError("The external signature does not match this DID and exact payload.");
@@ -1497,7 +1571,7 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
   }
 
   async function publish() {
-    if (!writesEnabled || !dry?.signature || !did || !finalConfirm || !entry) return;
+    if (!writesEnabled || protocol.state !== "ready" || !dry?.signature || !did || !finalConfirm || !entry) return;
     setError(""); setPublishAttempted(true);
     try {
       const response = await fetch(edgeUrl("/api/technocore/relay"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ room, from: did, text: dry.normalized, nonce: dry.nonce, sig: dry.signature }) });
@@ -1610,12 +1684,14 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
         <FileCheck2 size={22} />
         <div><strong>Choose what happens to the finished work.</strong><p>Keep it private, or prepare one public result tied to the exact artifact and test evidence. Nothing is sent from this choice.</p></div>
       </div>
+      {initialDraft?.exactText ? <div className="agent-draft-banner"><Bot /><span><strong>FINISHED-RESULT DRAFT FROM YOUR AGENT</strong><small>It opened here because results need artifact, test, digest, and receipt checks. Nothing was sent.</small></span></div> : null}
       <div className="proof-sharing" aria-label="Choose private or public proof">
         <button className={sharing === "private" ? "is-selected" : ""} aria-pressed={sharing === "private"} onClick={() => chooseSharing("private")}><LockKeyhole /><span><strong>KEEP PRIVATE</strong><small>Evidence stays in this browser. State remains planned.</small></span></button>
         <button className={sharing === "mission" ? "is-selected" : ""} aria-pressed={sharing === "mission"} disabled={!mission.room} onClick={() => chooseSharing("mission")}><MessageSquareText /><span><strong>USE MISSION ROOM</strong><small>{mission.room ? `Prepare for #${mission.room}` : "This private mission has no public room."}</small></span></button>
         <button className={sharing === "other" ? "is-selected" : ""} aria-pressed={sharing === "other"} onClick={() => chooseSharing("other")}><Search /><span><strong>CHOOSE A ROOM</strong><small>Select a relevant live Technocore room.</small></span></button>
       </div>
       {sharing === "private" ? <div className="private-proof-state"><LockKeyhole /><div><strong>This mission can stay private.</strong><p>Your attached evidence remains local. Nothing is signed, published, verified, or offered for independent review.</p></div></div> : <>
+      {writesEnabled ? <ProtocolPreflightNotice state={protocol.state} checkedAt={protocol.checkedAt} onRetry={protocol.recheck} /> : null}
       <div className="proof-stage-list" aria-label="Public proof steps">
         <span className={!receiptMatchesCurrentEvidence ? "is-current" : "is-complete"}><b>1</b><small>PREVIEW RESULT</small></span>
         <span className={receiptMatchesCurrentEvidence ? "is-complete" : ""}><b>2</b><small>VERIFY RECEIPT</small></span>
@@ -1631,8 +1707,8 @@ function ProofModal({ mission, entry, did, identity, ledger, rooms, onLedger, on
         {resultHash ? <div className="result-digest"><small>AUTOMATIC RESULT DIGEST</small><code>{resultHash}</code><span>Created from this mission ID plus the attached artifact and test references. It will be added to the public message automatically.</span></div> : <div className="write-lock"><LockKeyhole /><span><strong>{digestStatus === "creating" ? "Creating the result digest…" : "Public preview is not ready yet."}</strong><small>Close this window and attach both an artifact and a test under the Mission Pack. Do not invent a hash.</small></span></div>}
         <label>What should the public record say?<small>Describe what was made and what was actually tested.</small><textarea value={text} onChange={(event) => { setText(event.target.value); setDry(null); }} placeholder="An honest, one-off description of what the contribution does and how it was checked." /></label>
         {!dry ? <button className="button button-primary" disabled={!room || !proofEvidence.ready || !resultHash || !text.trim()} onClick={preview}>PREVIEW EXACT RESULT — DO NOT SEND</button> : <><p className="panel-kicker">EXACT MESSAGE REVIEW</p><div className="dry-run exact"><p><small>TARGET</small><code>technocore.chat/r/{room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{dry.nonce}</code></p><p><small>NORMALIZED EXACT TEXT · DIGEST INCLUDED</small><code>{dry.normalized}</code></p><p><small>SIGNED PAYLOAD</small><code>{dry.payload}</code></p></div></>}
-        {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
-        {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim()} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
+        {dry && identity?.did === did && !dry.signature ? <><label>Unlock once to prepare the signature<input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label><button className="button button-secondary" disabled={!signingReady} onClick={() => void prepareSignature()}>SIGN LOCALLY — DO NOT SEND</button></> : null}
+        {dry && identity?.did !== did && !dry.signature ? <div className="external-signing"><p className="panel-kicker">EXTERNAL SIGNER · NOTHING SENT</p><p>Copy the exact payload into your existing signer, then paste only its base64url signature here. Never paste a private key or seed.</p><div className="command-box"><code>{dry.payload}</code><button aria-label="Copy exact payload" onClick={() => void navigator.clipboard.writeText(dry.payload)}><Clipboard /></button></div><label>External signer signature<input value={externalSignature} onChange={(event) => setExternalSignature(event.target.value)} placeholder="86-character base64url signature" /></label><button className="button button-secondary" disabled={!externalSignature.trim() || !signingReady} onClick={() => void acceptExternalSignature()}>VERIFY SIGNATURE LOCALLY</button></div> : null}
         {dry?.signature ? <div className="signed-ready"><ShieldCheck /><span><strong>Signature prepared locally.</strong><small>Nothing has been published.</small></span></div> : null}
         {dry?.signature && writesEnabled && !publishAttempted ? <><label className="check-row"><input type="checkbox" checked={finalConfirm} onChange={(event) => setFinalConfirm(event.target.checked)} />I reviewed the target, DID, nonce, and exact normalized text above. Publish this one message.</label><button className="button button-primary" disabled={!finalConfirm} onClick={() => void publish()}>PUBLISH THIS EXACT MESSAGE</button></> : null}
         {dry?.signature && writesEnabled && publishAttempted ? <div className="readback-retry"><strong>This signature will not be sent again.</strong><p>Only re-check Technocore for the same DID, nonce, exact text and result digest.</p><button className="button button-secondary" onClick={() => void verifyReadback()}>CHECK READ-BACK AGAIN</button></div> : null}

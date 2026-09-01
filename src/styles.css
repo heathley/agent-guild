@@ -557,6 +557,12 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .activity-desk span { display: grid; gap: 6px; }
 .activity-desk strong { font: 700 12px "Space Mono", monospace; }
 .activity-desk small { max-width: 680px; color: var(--secondary); font-size: 11px; line-height: 1.6; }
+.pending-activity-card { width: 100%; margin-top: 16px; padding: 16px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 13px; align-items: start; border: 1px solid var(--cyan); background: rgba(0, 180, 216, .055); color: var(--ice); text-align: left; cursor: pointer; }
+.pending-activity-card > svg { color: var(--cyan); }
+.pending-activity-card span { min-width: 0; display: grid; gap: 5px; }
+.pending-activity-card small { color: var(--cyan); font: 700 8px "Space Mono", monospace; }
+.pending-activity-card strong { font: 700 10px "Space Mono", monospace; }
+.pending-activity-card p { margin: 2px 0 0; color: var(--secondary); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
 .public-activity-list { margin-top: 16px; display: grid; gap: 1px; padding: 1px; background: var(--line); }
 .public-activity-list article { display: grid; grid-template-columns: 90px 1fr; gap: 15px; padding: 15px; background: var(--surface); }
 .public-activity-list article > div { min-width: 0; }
@@ -584,6 +590,14 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
 .agent-draft-banner span { display: grid; gap: 4px; }
 .agent-draft-banner strong { font: 700 9px "Space Mono", monospace; }
 .agent-draft-banner small { color: var(--secondary); font-size: 10px; }
+.protocol-preflight { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; margin: 16px 0; padding: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--cyan); }
+.protocol-preflight > svg { flex: none; }
+.protocol-preflight span { min-width: 0; display: grid; gap: 4px; }
+.protocol-preflight strong { font: 700 9px "Space Mono", monospace; }
+.protocol-preflight small { color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.protocol-preflight.is-ready { border-color: var(--green); color: var(--green); }
+.protocol-preflight.is-paused { border-color: var(--red); color: var(--red); }
+.protocol-preflight .button { min-height: 38px; white-space: nowrap; }
 .activity-compose { display: grid; gap: 14px; }
 
 .community-section { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--base); }
@@ -738,6 +752,8 @@ input::placeholder, textarea::placeholder { color: #6e7687; }
   .mission-draft .button { grid-column: 1; }
   .discovery-controls fieldset { grid-template-columns: 1fr; }
   .activity-desk { align-items: stretch; flex-direction: column; }
+  .pending-activity-card, .protocol-preflight { grid-template-columns: auto minmax(0, 1fr); }
+  .pending-activity-card > svg:last-child, .protocol-preflight .button { grid-column: 2; }
   .community-room-head { align-items: stretch; flex-direction: column; }
   .community-room-actions { display: grid; grid-template-columns: 1fr; }
   .community-room-actions .button { width: 100%; }

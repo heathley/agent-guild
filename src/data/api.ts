@@ -34,6 +34,20 @@ export type SourceSnapshot = {
   fetchedAt: string;
 };
 
+export type TechnocoreProtocolSource = {
+  path: string;
+  ok: boolean;
+  status: number;
+  sha256: string;
+  expected: string;
+  matches: boolean;
+};
+
+export type TechnocoreProtocolStatus = {
+  checkedAt: string;
+  sources: TechnocoreProtocolSource[];
+};
+
 const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
 export async function fetchTechnocoreRooms(signal?: AbortSignal): Promise<PublicRoom[]> {
@@ -69,6 +83,36 @@ export async function fetchTechnocoreRoom(room: string, signal?: AbortSignal): P
   if (!ROOM_PATTERN.test(room)) throw new Error("This room name cannot be inspected safely.");
   const payload = await requestJson(`/api/technocore/room/${encodeURIComponent(room)}?limit=50`, signal);
   return normalizeRoomWindow(payload, room);
+}
+
+export async function fetchTechnocoreProtocolStatus(signal?: AbortSignal): Promise<TechnocoreProtocolStatus> {
+  const payload = await requestJson("/api/technocore/meta", signal);
+  if (!payload || typeof payload !== "object") throw new Error("Technocore publishing status could not be checked.");
+  const value = payload as Record<string, unknown>;
+  const rows = Array.isArray(value.sources) ? value.sources : [];
+  const sources = rows.flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const source = row as Record<string, unknown>;
+    const path = clean(source.path, 40);
+    if (!["/config", "/openapi.json", "/llms.txt"].includes(path)) return [];
+    return [{
+      path,
+      ok: source.ok === true,
+      status: typeof source.status === "number" ? source.status : 0,
+      sha256: clean(source.sha256, 64),
+      expected: clean(source.expected, 64),
+      matches: source.matches === true,
+    } satisfies TechnocoreProtocolSource];
+  });
+  if (sources.length !== 3) throw new Error("Technocore publishing status is incomplete.");
+  return {
+    checkedAt: safeDate(value.checkedAt) || new Date().toISOString(),
+    sources,
+  };
+}
+
+export function protocolStatusIsReady(status: TechnocoreProtocolStatus): boolean {
+  return status.sources.length === 3 && status.sources.every((source) => source.ok && source.matches && source.expected.length === 64);
 }
 
 // Compatibility helper for callers that explicitly need both sources. The UI

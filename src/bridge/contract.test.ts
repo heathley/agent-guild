@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASSIGNMENT_VERSION, BRIDGE_VERSION, DISCOVERY_REQUEST_VERSION, isAgentBridgeEvent, normalizeWorkspacePath, sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment } from "./contract";
+import { ASSIGNMENT_VERSION, BRIDGE_VERSION, DISCOVERY_REQUEST_VERSION, isAgentBridgeEvent, normalizeWorkspacePath, publicActionDestination, sanitizeBridgePayload, sanitizeDiscoveryRequest, sanitizeMissionAssignment } from "./contract";
 
 const event = {
   version: BRIDGE_VERSION,
@@ -11,6 +11,11 @@ const event = {
 };
 
 describe("Agent Bridge contract", () => {
+  it("routes finished results to proof and conversation drafts to activity", () => {
+    expect(publicActionDestination({ kind: "result", room: "technocore", exactText: "Finished and tested" })).toBe("proof");
+    expect(publicActionDestination({ kind: "question", room: "technocore", exactText: "Can anyone reproduce this?" })).toBe("activity");
+  });
+
   it("accepts a model-neutral lifecycle event", () => {
     expect(isAgentBridgeEvent(event)).toBe(true);
     expect(sanitizeBridgePayload(event)).toEqual(event);

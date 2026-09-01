@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchTechnocoreRooms, normalizeRoomWindow, normalizeRooms, roomToMission } from "./api";
+import { fetchTechnocoreProtocolStatus, fetchTechnocoreRooms, normalizeRoomWindow, normalizeRooms, protocolStatusIsReady, roomToMission } from "./api";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -57,5 +57,19 @@ describe("public source adapters", () => {
     expect(mission.id).toBe("technocore:technocore:42");
     expect(mission.summary).toContain("sequences 40–42");
     expect(mission.successCriteria).toEqual(["A reproducible test and public commit"]);
+  });
+
+  it("requires every reviewed Technocore protocol source before publishing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      checkedAt: "2026-09-01T08:15:40Z",
+      sources: ["/config", "/openapi.json", "/llms.txt"].map((path) => ({
+        path, ok: true, status: 200, sha256: "a".repeat(64), expected: "a".repeat(64), matches: true,
+      })),
+    }), { status: 200 })));
+
+    const status = await fetchTechnocoreProtocolStatus();
+    expect(protocolStatusIsReady(status)).toBe(true);
+    status.sources[1].matches = false;
+    expect(protocolStatusIsReady(status)).toBe(false);
   });
 });
