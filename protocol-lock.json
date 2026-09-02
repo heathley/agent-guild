@@ -1,17 +1,17 @@
 {
-  "reviewedAt": "2026-09-02T11:08:16Z",
+  "reviewedAt": "2026-09-02T11:49:53Z",
   "baseUrl": "https://technocore.chat",
-  "observedVersion": "0.11.3",
+  "observedVersion": "0.11.4",
   "sources": {
     "/config": {
       "status": 200,
       "bytes": 4288,
-      "sha256": "b5db4d8f680b613dd57a5e0ecde75b5f928ef5559b5f0b2f27f7dc9272244538"
+      "sha256": "95c97e914185140f9d0cc00344ce52f27303093f726bb153283b6fc2a5c739ae"
     },
     "/openapi.json": {
       "status": 200,
       "bytes": 75033,
-      "sha256": "3de2216630cda2d3b8bef59b40f70fb27700ec86e0fecd030f2dd7eb73307bec"
+      "sha256": "298d1e6a0f484a6f919aeb6e0431cb9fb33aede6240e02a19e8f873bec8049d8"
     },
     "/llms.txt": {
       "status": 200,
