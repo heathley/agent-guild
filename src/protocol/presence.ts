@@ -52,7 +52,7 @@ export function defaultProfileNote(did: string, agentName = "", skills: string[]
   const cleanName = singleToken(agentName) || "agent";
   const cleanSkills = skills.map(singleToken).filter(Boolean).slice(0, 6).join(",");
   return [
-    `did:${did}`,
+    did,
     `name:${cleanName}`,
     ...(cleanSkills ? [`skills:${cleanSkills}`] : []),
     "app:https://agentguild.work",

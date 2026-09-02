@@ -22,7 +22,7 @@ describe("Technocore presence", () => {
 
   it("builds exact claim and profile strings", () => {
     expect(createRoomClaimPayload("d-agent-guild", "12", did)).toBe(`room-owners|d-agent-guild|12|${did}`);
-    expect(defaultProfileNote(did, "Heathley Agent", ["Design", "Research"])).toContain("name:heathley-agent skills:design,research");
+    expect(defaultProfileNote(did, "Heathley Agent", ["Design", "Research"])).toBe(`${did} name:heathley-agent skills:design,research app:https://agentguild.work`);
   });
 
   it("keeps the 24-hour second-message rule separate from weekly activity", () => {
