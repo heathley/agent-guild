@@ -7,7 +7,7 @@ import {
 import mascotAsset from "./assets/flop-mascot-preview.png";
 import {
   createRelayPairing, decryptRelayedEvent, exportRelayPairing, pairingFileName, parseRelayPairing,
-  pollRelayEvents, registerRelayPairing, sendRelayAssignment, sendRelayDiscoveryRequest,
+  pollRelayEvents, registerRelayPairing, relayPollDelay, sendRelayAssignment, sendRelayDiscoveryRequest,
   type EncryptedEventEnvelope, type RelayPairingFile,
 } from "./bridge/pairing";
 import { ASSIGNMENT_VERSION, DISCOVERY_REQUEST_VERSION, normalizeWorkspacePath, publicActionDestination, publicResultHasMission, type AgentBridgeEvent, type MissionAssignment, type PublicActionDraft } from "./bridge/contract";
@@ -189,9 +189,21 @@ function App() {
   useEffect(() => {
     if (!pairing) return;
     let stopped = false;
+    let timer: number | undefined;
+    let polling = false;
+    const schedule = (delay: number) => {
+      if (stopped) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void poll(), delay);
+    };
     const poll = async () => {
+      if (stopped || polling) return;
+      polling = true;
+      let eventCount = 0;
+      let failed = false;
       try {
         const events = await pollRelayEvents(pairing, relayCursor.current);
+        eventCount = events.length;
         for (const item of events) {
           const event = await decryptRelayedEvent(pairing, item.envelope);
           relayCursor.current = Math.max(relayCursor.current, item.seq);
@@ -206,6 +218,7 @@ function App() {
           else if (["mission.researching", "mission.building", "mission.testing"].includes(event.event)) setHandoffStatus(`Agent update: ${event.event.split(".")[1]}. This is activity—not proof yet.`);
         }
       } catch (error) {
+        failed = true;
         if (!stopped) {
           const expired = error instanceof Error && /expired/i.test(error.message);
           if (expired) {
@@ -219,11 +232,21 @@ function App() {
           }
           setHandoffStatus(error instanceof Error ? error.message : "The encrypted agent relay could not be read.");
         }
+      } finally {
+        polling = false;
       }
-      if (!stopped) window.setTimeout(poll, 1600);
+      if (!stopped) schedule(relayPollDelay(document.visibilityState, eventCount > 0, failed));
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") schedule(250);
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     void poll();
-    return () => { stopped = true; };
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [connectedDid, pairing]);
 
   useEffect(() => {

@@ -19,6 +19,12 @@ export type RelayPairingFile = {
 
 export type RelayedEvent = { seq: number; envelope: EncryptedEventEnvelope };
 
+export function relayPollDelay(visibility: "visible" | "hidden" | "prerender", hadEvents = false, failed = false): number {
+  if (visibility !== "visible") return 5 * 60_000;
+  if (failed) return 60_000;
+  return hadEvents ? 5_000 : 30_000;
+}
+
 export function createPairToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return `agp_${encode(bytes)}`;

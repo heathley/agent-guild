@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { decryptRelayedMission, encryptConnectorEvent, encryptRelayedConnectorEvent } from "../../connector/crypto.js";
 import { ASSIGNMENT_VERSION, BRIDGE_VERSION } from "./contract";
-import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, exportRelayPairing, pairingFileName, pairingSessionId, parseRelayPairing, sendRelayAssignment } from "./pairing";
+import { createRelayPairing, decryptConnectorEvent, decryptRelayedEvent, exportRelayPairing, pairingFileName, pairingSessionId, parseRelayPairing, relayPollDelay, sendRelayAssignment } from "./pairing";
 
 const token = `agp_${"a".repeat(43)}`;
 const agentDid = `did:key:z6Mk${"a".repeat(44)}`;
 const event = { version: BRIDGE_VERSION, eventId: "evt_pair", occurredAt: "2026-08-29T00:00:00.000Z", event: "mission.testing" as const, source: { adapter: "mcp", agentLabel: "test" }, identity: { did: null } };
 
 describe("browser pairing", () => {
+  it("keeps relay polling inside the free-tier request budget", () => {
+    expect(relayPollDelay("visible")).toBe(30_000);
+    expect(relayPollDelay("visible", true)).toBe(5_000);
+    expect(relayPollDelay("visible", false, true)).toBe(60_000);
+    expect(relayPollDelay("hidden")).toBe(300_000);
+  });
+
   it("uses a short session-bound filename so repeated downloads do not collide", () => {
     expect(pairingFileName("AbCdEfGh1234567890_-abcdefghijkl")).toBe("agent-guild-pairing-AbCdEfGh.json");
     expect(() => pairingFileName("../../pairing")).toThrow(/session id/);
