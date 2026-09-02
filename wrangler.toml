@@ -21,9 +21,9 @@ new_sqlite_classes = ["WriteGuard"]
 [vars]
 PUBLIC_WRITES = "true"
 APP_ORIGIN = "https://agentguild.work"
-EXPECTED_CONFIG_SHA256 = "4fd0a99a7d7dac41b03da45a4f43e511ef379cf5686930b84862245df25fa3bf"
-EXPECTED_OPENAPI_SHA256 = "aec05fab20bebda1c3b25f620095259226b4e4db7857f8eafdfa1ee7832def32"
-EXPECTED_LLMS_SHA256 = "22eb92a9567d3b16bd795554d5476fdd846e89b08f255a6a0a7805ddbcb5d3c6"
+EXPECTED_CONFIG_SHA256 = "b5db4d8f680b613dd57a5e0ecde75b5f928ef5559b5f0b2f27f7dc9272244538"
+EXPECTED_OPENAPI_SHA256 = "3de2216630cda2d3b8bef59b40f70fb27700ec86e0fecd030f2dd7eb73307bec"
+EXPECTED_LLMS_SHA256 = "c386c79a48d95b669e206d5e239633881895a0f86e38d0de48333b3d724e1225"
 # Public writes were enabled only after the staging relay completed a
 # human-approved DID + nonce + exact-text read-back test. Hashes are still
 # compared live before every write and any mismatch closes the relay.
