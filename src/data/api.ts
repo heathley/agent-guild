@@ -52,7 +52,7 @@ export type TechnocorePresence = {
   did: string;
   checkedAt: string;
   profile: { exists: boolean; note: string; source: "sharded" | "legacy" | null; fingerprint: string; path: string };
-  room?: { room: string; owner: string; nonce: string; window: RoomWindow };
+  room?: { room: string; owner: string; ownerChecked: boolean; nonce: string; windowAvailable: boolean; window: RoomWindow; error: string };
 };
 
 const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -141,8 +141,11 @@ export async function fetchTechnocorePresence(did: string, room = "", signal?: A
     result.room = {
       room: name,
       owner: clean(roomValue.owner, 180),
+      ownerChecked: roomValue.ownerChecked === true,
       nonce: clean(roomValue.nonce, 19) || "0",
+      windowAvailable: roomValue.windowAvailable === true,
       window: normalizeRoomWindow(roomValue.window, name),
+      error: clean(roomValue.error, 300),
     };
   }
   return result;

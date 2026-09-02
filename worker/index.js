@@ -476,12 +476,25 @@ async function readPresence(did, room) {
   };
   if (!room) return result;
 
-  const [owner, nonce, window] = await Promise.all([
+  const [ownerResult, nonceResult, windowResult] = await Promise.allSettled([
     readNote("room-owners", room),
     readNote("room-nonce", room),
     readRoomWindow(room),
   ]);
-  return { ...result, room: { room, owner: owner || "", nonce: /^\d{1,19}$/.test(nonce || "") ? nonce : "0", window } };
+  const owner = ownerResult.status === "fulfilled" ? ownerResult.value : "";
+  const nonce = nonceResult.status === "fulfilled" ? nonceResult.value : "";
+  const window = windowResult.status === "fulfilled" ? windowResult.value : { room, count: 0, first_seq: null, last_seq: null, messages: [] };
+  const errors = [
+    ...(ownerResult.status === "rejected" ? ["Room ownership could not be read."] : []),
+    ...(nonceResult.status === "rejected" ? ["Room nonce could not be read."] : []),
+    ...(windowResult.status === "rejected" ? ["Room messages are temporarily unavailable."] : []),
+  ];
+  return { ...result, room: {
+    room, owner: owner || "", ownerChecked: ownerResult.status === "fulfilled",
+    nonce: /^\d{1,19}$/.test(nonce || "") ? nonce : "0",
+    windowAvailable: windowResult.status === "fulfilled", window,
+    error: errors.join(" "),
+  } };
 }
 
 async function readRoomWindow(room) {

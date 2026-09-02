@@ -101,6 +101,25 @@ describe("edge worker", () => {
     }
   });
 
+  it("keeps profile and ownership visible when the room window is temporarily unavailable", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/kv/did-")) return new Response(`!! UNTRUSTED CONTENT\n\ndid:${did} name:test\n`);
+      if (url.includes("/kv/room-owners/d-test")) return new Response(`!! UNTRUSTED CONTENT\n\n${did}\n`);
+      if (url.includes("/kv/room-nonce/d-test")) return new Response("!! UNTRUSTED CONTENT\n\n7\n");
+      if (url.includes("/r/d-test")) return new Response("unavailable", { status: 503 });
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    try {
+      const response = await handleRequest(new Request(`https://guild.test/api/technocore/presence?did=${encodeURIComponent(did)}&room=d-test`));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ profile: { exists: true }, room: { owner: did, ownerChecked: true, windowAvailable: false, error: expect.stringContaining("temporarily unavailable") } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("turns upstream failures into safe self-service recovery states", () => {
     expect(describeUpstreamRelayFailure(503, "service unavailable")).toMatchObject({
       error: "Technocore is temporarily unavailable after submission. Delivery is unconfirmed.",

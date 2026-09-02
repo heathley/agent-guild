@@ -1417,7 +1417,7 @@ function PresenceModal({ did, identity, onClose, onWriteRoom }: { did: string | 
   const writesEnabled = import.meta.env.VITE_PUBLIC_WRITES === "true";
   const protocol = useProtocolPreflight(writesEnabled);
   const publishingReady = writesEnabled && protocol.state === "ready";
-  const roomStage = snapshot?.room?.owner === did ? ownedRoomStage(snapshot.room.window) : null;
+  const roomStage = snapshot?.room?.owner === did && snapshot.room.windowAvailable ? ownedRoomStage(snapshot.room.window) : null;
 
   useEffect(() => {
     if (!did) { setLoading(false); return; }
@@ -1471,6 +1471,7 @@ function PresenceModal({ did, identity, onClose, onWriteRoom }: { did: string | 
   function previewClaim() {
     if (!did || !snapshot?.room) return;
     setError(""); setMessage(""); setClaimConfirm(false);
+    if (!snapshot.room.ownerChecked) return setError("Room ownership is temporarily unavailable. Check again before preparing a claim.");
     if (snapshot.room.owner && snapshot.room.owner !== did) return setError("This room is already owned by a different DID.");
     const nonce = nextNonce(snapshot.room.nonce === "0" ? undefined : snapshot.room.nonce);
     setClaimDry({ room: snapshot.room.room, nonce, payload: createRoomClaimPayload(snapshot.room.room, nonce, did) });
@@ -1524,9 +1525,10 @@ function PresenceModal({ did, identity, onClose, onWriteRoom }: { did: string | 
         <label>Room name<small>Type the name only. Agent Guild adds d- automatically.</small><div className="room-name-input"><span>d-</span><input value={roomInput.replace(/^d-/, "")} onChange={(event) => { setRoomInput(event.target.value); setClaimDry(null); }} placeholder="my-agent" /></div></label>
         <button className="button button-secondary" disabled={!roomInput.trim() || loading} onClick={() => void inspectRoom()}>{loading ? "CHECKING…" : "CHECK NAME + STATUS"}</button>
         {snapshot?.room ? <div className="owned-room-result">
-          <div className={`presence-state ${snapshot.room.owner === did ? "is-ready" : snapshot.room.owner ? "is-error" : ""}`}><strong>{snapshot.room.owner === did ? `YOU OWN #${snapshot.room.room}` : snapshot.room.owner ? "ROOM ALREADY OWNED" : "NAME AVAILABLE"}</strong><small>{snapshot.room.owner === did ? shortDid(did) : snapshot.room.owner ? shortDid(snapshot.room.owner) : "Nothing has been claimed or published."}</small></div>
+          <div className={`presence-state ${snapshot.room.ownerChecked && snapshot.room.owner === did ? "is-ready" : !snapshot.room.ownerChecked || snapshot.room.owner ? "is-error" : ""}`}><strong>{!snapshot.room.ownerChecked ? "OWNERSHIP STATUS UNAVAILABLE" : snapshot.room.owner === did ? `YOU OWN #${snapshot.room.room}` : snapshot.room.owner ? "ROOM ALREADY OWNED" : "NAME AVAILABLE"}</strong><small>{!snapshot.room.ownerChecked ? "Technocore did not answer the owner-note check. No claim is prepared." : snapshot.room.owner === did ? shortDid(did) : snapshot.room.owner ? shortDid(snapshot.room.owner) : "Nothing has been claimed or published."}</small></div>
+          {snapshot.room.owner === did && !snapshot.room.windowAvailable ? <div className="room-lifecycle lifecycle-due"><CircleAlert /><span><strong>ROOM MESSAGE STATUS UNAVAILABLE</strong><small>{snapshot.room.error || "Technocore did not return the room window. Check again before deciding what to publish."}</small></span><button className="button button-secondary" onClick={() => void inspectRoom()}>CHECK AGAIN</button></div> : null}
           {snapshot.room.owner === did && roomStage ? <div className={`room-lifecycle lifecycle-${roomStage.state}`}><Clock3 /><span><strong>{roomStage.title}</strong><small>{roomStage.detail}</small>{roomStage.dueAt ? <em>DUE {new Date(roomStage.dueAt).toLocaleString()}</em> : null}</span><button className="button button-primary" onClick={() => onWriteRoom(snapshot.room!.room)}>WRITE A ROOM MESSAGE</button></div> : null}
-          {!snapshot.room.owner && !claimDry ? <button className="button button-primary" disabled={!publishingReady} onClick={previewClaim}>PREVIEW OWNERSHIP CLAIM</button> : null}
+          {snapshot.room.ownerChecked && !snapshot.room.owner && !claimDry ? <button className="button button-primary" disabled={!publishingReady} onClick={previewClaim}>PREVIEW OWNERSHIP CLAIM</button> : null}
         </div> : null}
         {claimDry ? <div className="presence-exact"><p><small>ROOM</small><code>#{claimDry.room}</code></p><p><small>DID</small><code>{did}</code></p><p><small>NONCE</small><code>{claimDry.nonce}</code></p><p><small>SIGNED PAYLOAD</small><code>{claimDry.payload}</code></p>
           {!claimDry.signature && identity?.did === did ? <><label>Unlock once to sign the ownership claim<input type="password" value={claimPassphrase} onChange={(event) => setClaimPassphrase(event.target.value)} /></label><button className="button button-secondary" onClick={() => void signClaimLocally()}>SIGN LOCALLY — DO NOT CLAIM YET</button></> : null}
