@@ -48,6 +48,13 @@ export type TechnocoreProtocolStatus = {
   sources: TechnocoreProtocolSource[];
 };
 
+export type TechnocorePresence = {
+  did: string;
+  checkedAt: string;
+  profile: { exists: boolean; note: string; source: "sharded" | "legacy" | null; fingerprint: string; path: string };
+  room?: { room: string; owner: string; nonce: string; window: RoomWindow };
+};
+
 const ROOM_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
 export async function fetchTechnocoreRooms(signal?: AbortSignal): Promise<PublicRoom[]> {
@@ -109,6 +116,50 @@ export async function fetchTechnocoreProtocolStatus(signal?: AbortSignal): Promi
     checkedAt: safeDate(value.checkedAt) || new Date().toISOString(),
     sources,
   };
+}
+
+export async function fetchTechnocorePresence(did: string, room = "", signal?: AbortSignal): Promise<TechnocorePresence> {
+  const query = new URLSearchParams({ did });
+  if (room) query.set("room", room);
+  const payload = await requestJson(`/api/technocore/presence?${query}`, signal);
+  if (!payload || typeof payload !== "object") throw new Error("Technocore presence status could not be read.");
+  const value = payload as Record<string, unknown>;
+  const profile = value.profile && typeof value.profile === "object" ? value.profile as Record<string, unknown> : {};
+  const result: TechnocorePresence = {
+    did: clean(value.did, 180), checkedAt: safeDate(value.checkedAt) || new Date().toISOString(),
+    profile: {
+      exists: profile.exists === true,
+      note: clean(profile.note, 2_000),
+      source: profile.source === "sharded" || profile.source === "legacy" ? profile.source : null,
+      fingerprint: clean(profile.fingerprint, 16),
+      path: clean(profile.path, 80),
+    },
+  };
+  const roomValue = value.room && typeof value.room === "object" ? value.room as Record<string, unknown> : null;
+  if (roomValue) {
+    const name = clean(roomValue.room, 48);
+    result.room = {
+      room: name,
+      owner: clean(roomValue.owner, 180),
+      nonce: clean(roomValue.nonce, 19) || "0",
+      window: normalizeRoomWindow(roomValue.window, name),
+    };
+  }
+  return result;
+}
+
+export async function publishTechnocoreProfileNote(did: string, note: string): Promise<TechnocorePresence["profile"]> {
+  const payload = await postJson("/api/technocore/profile-note", { did, note });
+  if (!payload || typeof payload !== "object" || (payload as Record<string, unknown>).published !== true) throw new Error("Profile note was not confirmed by read-back.");
+  const value = payload as Record<string, unknown>;
+  return { exists: true, note: clean(value.note, 2_000), source: "sharded", fingerprint: "", path: clean(value.path, 80) };
+}
+
+export async function claimTechnocoreRoom(input: { room: string; did: string; nonce: string; sig: string }): Promise<{ room: string; owner: string; existing: boolean }> {
+  const payload = await postJson("/api/technocore/claim-room", input);
+  if (!payload || typeof payload !== "object" || (payload as Record<string, unknown>).claimed !== true) throw new Error("Room ownership was not confirmed by read-back.");
+  const value = payload as Record<string, unknown>;
+  return { room: clean(value.room, 48), owner: clean(value.owner, 180), existing: value.existing === true };
 }
 
 export function protocolStatusIsReady(status: TechnocoreProtocolStatus): boolean {
@@ -216,6 +267,25 @@ async function requestJson(path: string, signal?: AbortSignal, timeoutMs = 20_00
     throw new Error(detail || `Public source returned HTTP ${response.status}.`);
   }
   return response.json();
+}
+
+async function postJson(path: string, body: unknown, timeoutMs = 25_000): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    const response = await fetch(edgeUrl(path), { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) {
+      let detail = "";
+      try { detail = clean((await response.json() as { error?: unknown }).error, 300); } catch { /* non-JSON upstream */ }
+      throw new Error(detail || `Public source returned HTTP ${response.status}.`);
+    }
+    return response.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Technocore took too long to confirm this action. Read the public state before trying again.");
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
 }
 
 function pause(milliseconds: number, signal?: AbortSignal): Promise<void> {

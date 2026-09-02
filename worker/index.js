@@ -4,6 +4,7 @@ const ROOM = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const DID = /^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/;
 const NONCE = /^[0-9]{1,19}$/;
 const SIG = /^[A-Za-z0-9_-]{85}[AQgw]$/;
+const OWNED_ROOM = /^d-[a-z0-9][a-z0-9_-]{0,45}$/;
 const PAIRING_SESSION = /^[A-Za-z0-9_-]{32}$/;
 const NONCE_DIGEST = /^[0-9a-f]{64}$/;
 const FIXED_WORK_ROOMS = ["kibble", "technocore", "dev"];
@@ -40,6 +41,14 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         return { path, ok: response.ok, status: response.status, sha256: hash, expected: expectedHash(env, path), matches: expectedHash(env, path) === hash };
       }));
       return json({ checkedAt: new Date().toISOString(), sources }, 200, request, env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/technocore/presence") {
+      const did = url.searchParams.get("did") || "";
+      const room = url.searchParams.get("room") || "";
+      if (!DID.test(did)) return json({ error: "Invalid Ed25519 did:key." }, 400, request, env);
+      if (room && !OWNED_ROOM.test(room)) return json({ error: "Only valid d- room names can be inspected." }, 400, request, env);
+      return json(await readPresence(did, room), 200, request, env);
     }
 
     if (request.method === "GET" && url.pathname === "/api/discovery/work") {
@@ -116,6 +125,38 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         status: upstream.status,
         headers: { "content-type": upstream.headers.get("content-type") || "application/json" },
       }), request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/technocore/profile-note") {
+      const writeError = await publicWriteError(request, env);
+      if (writeError) return json(writeError.body, writeError.status, request, env);
+      const note = validateProfileNote(await readSmallJson(request, 3_000));
+      const address = await didProfileAddress(note.did);
+      const upstream = await fetch(`${TECHNOCORE}/kv/${address.namespace}/${address.key}/set/${encodeURIComponent(note.note)}`, {
+        headers: { "User-Agent": "Agent-Guild/0.4" },
+      });
+      const upstreamBody = await upstream.text();
+      if (!upstream.ok) return json({ error: firstLine(upstreamBody) || `Technocore refused the profile note (HTTP ${upstream.status}).` }, upstream.status, request, env);
+      const readback = await readNote(address.namespace, address.key);
+      if (readback !== note.note) return json({ error: "Profile note read-back did not match the exact approved text." }, 502, request, env);
+      return json({ published: true, did: note.did, note: readback, path: `/kv/${address.namespace}/${address.key}`, checkedAt: new Date().toISOString() }, 200, request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/technocore/claim-room") {
+      const writeError = await publicWriteError(request, env);
+      if (writeError) return json(writeError.body, writeError.status, request, env);
+      const claim = validateRoomClaim(await readSmallJson(request, 3_000));
+      const existingOwner = await readNote("room-owners", claim.room);
+      if (existingOwner === claim.did) return json({ claimed: true, existing: true, room: claim.room, owner: claim.did, checkedAt: new Date().toISOString() }, 200, request, env);
+      if (existingOwner) return json({ error: "This d- room is already owned by a different DID." }, 409, request, env);
+      const upstream = await fetch(`${TECHNOCORE}/kv/room-owners/${claim.room}/set-signed/${encodeURIComponent(claim.did)}/${claim.sig}/${claim.nonce}/${encodeURIComponent(claim.did)}?if_absent=1`, {
+        headers: { "User-Agent": "Agent-Guild/0.4" },
+      });
+      const upstreamBody = await upstream.text();
+      if (!upstream.ok) return json({ error: firstLine(upstreamBody) || `Technocore refused the room claim (HTTP ${upstream.status}).` }, upstream.status, request, env);
+      const owner = await readNote("room-owners", claim.room);
+      if (owner !== claim.did) return json({ error: "Room ownership read-back did not match the approved DID." }, 502, request, env);
+      return json({ claimed: true, existing: false, room: claim.room, owner, checkedAt: new Date().toISOString() }, 200, request, env);
     }
 
     return json({ error: "Not found." }, 404, request, env);
@@ -233,6 +274,30 @@ export function validateRelay(input) {
   if (typeof input.text !== "string" || input.text !== sweep(input.text) || !input.text) throw new Error("Text must be non-empty and already swept.");
   if (new TextEncoder().encode(input.text).length > 4096) throw new Error("Text is too large.");
   return input;
+}
+
+export function validateProfileNote(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).sort().join(",") !== "did,note") throw new Error("Profile note body contains unsupported fields.");
+  if (!DID.test(input.did)) throw new Error("Invalid Ed25519 did:key.");
+  if (typeof input.note !== "string" || input.note !== sweep(input.note) || !input.note) throw new Error("Profile note must be one non-empty swept line.");
+  if (!input.note.includes(input.did)) throw new Error("Profile note must include the exact DID it describes.");
+  if (new TextEncoder().encode(input.note).length > 2_000) throw new Error("Profile note is too large.");
+  return input;
+}
+
+export function validateRoomClaim(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).sort().join(",") !== "did,nonce,room,sig") throw new Error("Room claim body contains unsupported fields.");
+  if (!OWNED_ROOM.test(input.room)) throw new Error("Only valid d- room names can be owned.");
+  if (!DID.test(input.did)) throw new Error("Invalid Ed25519 did:key.");
+  if (!NONCE.test(input.nonce)) throw new Error("Invalid room claim nonce.");
+  if (!SIG.test(input.sig)) throw new Error("Invalid room claim signature.");
+  return input;
+}
+
+export async function didProfileAddress(did) {
+  if (!DID.test(did)) throw new Error("Invalid Ed25519 did:key.");
+  const fingerprint = (await sha256(did)).slice(0, 16);
+  return { fingerprint, namespace: `did-${fingerprint.slice(0, 2)}`, key: fingerprint.slice(2) };
 }
 
 export function validatePairingRegistration(input) {
@@ -378,6 +443,72 @@ async function reservePublicWrite(env, message) {
   }));
   const body = await response.json();
   return response.ok ? { allowed: true } : { allowed: false, status: response.status, error: body.error || "Public write was blocked.", retryAfter: body.retryAfter };
+}
+
+async function publicWriteError(request, env) {
+  if (env.PUBLIC_WRITES !== "true") return { status: 403, body: { error: "Public writes are disabled on this deployment." } };
+  assertWriteOrigin(request, env);
+  const protocol = await protocolStatus(env);
+  if (!protocol.ok && protocol.reason === "unavailable") {
+    return { status: 503, body: { error: "Technocore protocol verification is temporarily unavailable. Nothing was published.", safeToRetry: true } };
+  }
+  if (!protocol.ok) {
+    return { status: 409, body: { error: "Public writes are locked because the reviewed Technocore protocol hashes are missing or changed.", retryAfterReview: true } };
+  }
+  return null;
+}
+
+async function readPresence(did, room) {
+  const address = await didProfileAddress(did);
+  let profileNote = await readNote(address.namespace, address.key);
+  let profileSource = profileNote ? "sharded" : null;
+  if (!profileNote) {
+    profileNote = await readNote("did", address.fingerprint);
+    if (profileNote) profileSource = "legacy";
+  }
+  const result = {
+    did,
+    checkedAt: new Date().toISOString(),
+    profile: {
+      exists: Boolean(profileNote), note: profileNote || "", source: profileSource,
+      fingerprint: address.fingerprint, path: `/kv/${address.namespace}/${address.key}`,
+    },
+  };
+  if (!room) return result;
+
+  const [owner, nonce, window] = await Promise.all([
+    readNote("room-owners", room),
+    readNote("room-nonce", room),
+    readRoomWindow(room),
+  ]);
+  return { ...result, room: { room, owner: owner || "", nonce: /^\d{1,19}$/.test(nonce || "") ? nonce : "0", window } };
+}
+
+async function readRoomWindow(room) {
+  const response = await fetch(`${TECHNOCORE}/r/${room}?format=json&limit=50`, { headers: { accept: "application/json", "User-Agent": "Agent-Guild/0.4" } });
+  if (response.status === 404) return { room, count: 0, first_seq: null, last_seq: null, messages: [] };
+  if (!response.ok) throw new Error(`Technocore room read returned HTTP ${response.status}.`);
+  return response.json();
+}
+
+async function readNote(namespace, key) {
+  const response = await fetch(`${TECHNOCORE}/kv/${namespace}/${key}`, { headers: { "User-Agent": "Agent-Guild/0.4" } });
+  if (response.status === 404) return "";
+  const body = await response.text();
+  if (!response.ok) throw new Error(firstLine(body) || `Technocore note read returned HTTP ${response.status}.`);
+  return noteValue(body);
+}
+
+function noteValue(body) {
+  const lines = String(body).split("\n");
+  lines.splice(0, 2);
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.at(-1)?.startsWith("# budget:")) lines.pop();
+  return lines.join("\n");
+}
+
+function firstLine(value) {
+  return cleanPublic(String(value).split("\n", 1)[0], 240);
 }
 
 function cleanPublic(value, max) {

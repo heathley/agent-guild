@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { webcrypto } from "node:crypto";
-import { buildDiscoverySnapshot, describeUpstreamRelayFailure, handleRequest, PairingSession, validatePairingRegistration, validateRelay, WriteGuard } from "./index.js";
+import { buildDiscoverySnapshot, describeUpstreamRelayFailure, didProfileAddress, handleRequest, PairingSession, validatePairingRegistration, validateProfileNote, validateRelay, validateRoomClaim, WriteGuard } from "./index.js";
 
 const did = "did:key:z6Mk11111111111111111111111111111111111111111111";
 
@@ -72,6 +72,33 @@ describe("edge worker", () => {
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86), prompt: "secret" })).toThrow(/unsupported/);
     expect(() => validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: "a".repeat(86) })).toThrow(/signature/);
     expect(validateRelay({ room: "general", from: did, nonce: "1", text: "hi", sig: `${"a".repeat(85)}A` }).room).toBe("general");
+  });
+
+  it("validates the narrow profile and owned-room write schemas", async () => {
+    expect(validateProfileNote({ did, note: `did:${did} name:test` }).note).toContain(did);
+    expect(() => validateProfileNote({ did, note: "name:test" })).toThrow(/exact DID/);
+    expect(validateRoomClaim({ room: "d-test", did, nonce: "1", sig: `${"a".repeat(85)}A` }).room).toBe("d-test");
+    expect(() => validateRoomClaim({ room: "test", did, nonce: "1", sig: `${"a".repeat(85)}A` })).toThrow(/d- room/);
+    await expect(didProfileAddress(did)).resolves.toMatchObject({ fingerprint: expect.stringMatching(/^[0-9a-f]{16}$/), namespace: expect.stringMatching(/^did-[0-9a-f]{2}$/) });
+  });
+
+  it("reads profile and owned-room status without treating note framing as content", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/kv/did-")) return new Response(`!! UNTRUSTED CONTENT\n\ndid:${did} name:test\n`);
+      if (url.includes("/kv/room-owners/d-test")) return new Response(`!! UNTRUSTED CONTENT\n\n${did}\n`);
+      if (url.includes("/kv/room-nonce/d-test")) return new Response("!! UNTRUSTED CONTENT\n\n7\n");
+      if (url.includes("/r/d-test")) return new Response(JSON.stringify({ room: "d-test", count: 1, first_seq: 1, last_seq: 1, messages: [{ seq: 1, ts: "2026-09-02T00:00:00Z", from: did, text: "hello" }] }));
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    try {
+      const response = await handleRequest(new Request(`https://guild.test/api/technocore/presence?did=${encodeURIComponent(did)}&room=d-test`));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ profile: { exists: true, note: `did:${did} name:test` }, room: { owner: did, nonce: "7", window: { count: 1 } } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("turns upstream failures into safe self-service recovery states", () => {
