@@ -227,7 +227,7 @@ server.registerTool("guild_propose_mission", {
   description: "Choose one scanned item as a local mission with an explicit success condition. This may start local work, but never claims or publishes publicly.",
   inputSchema: {
     id: z.string().min(1).max(96), title: z.string().min(1).max(160), outcome: z.string().min(1).max(500), success: z.string().min(1).max(500),
-    source: z.enum(["technocore-signal", "kibble-community", "local"]).default("local"), risk: z.enum(["low", "medium", "high"]).default("medium"),
+    source: z.enum(["technocore-signal", "kibble-community", "tclk-deal", "local"]).default("local"), risk: z.enum(["low", "medium", "high"]).default("medium"),
     workspace: z.string().min(1).max(1024).optional(),
     room: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,47}$/).optional(), sourceSeq: z.number().int().nonnegative().optional(),
   },

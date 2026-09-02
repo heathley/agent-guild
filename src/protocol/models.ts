@@ -1,4 +1,4 @@
-export type MissionSource = "technocore-signal" | "kibble-community" | "local";
+export type MissionSource = "technocore-signal" | "kibble-community" | "tclk-deal" | "local";
 
 export type ProofState =
   | "planned"

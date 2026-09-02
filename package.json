@@ -22,6 +22,7 @@
     "check": "npm run test && npm run typecheck:connector && npm run connector:smoke && npm run build:connector-package && npm run connector:package-smoke && npm run build:production && npm run audit:release"
   },
   "dependencies": {
+    "@flop-labs/tclk": "0.1.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/space-mono": "^5.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight, Bot, Check, CircleAlert, Clipboard, Clock3, Code2, ExternalLink, Eye, FileCheck2,
-  Github, History, KeyRound, Link2, LockKeyhole, MessageCircleQuestion, MessageSquareText, Pencil, Radio, RefreshCw, Search, Send, Share2, ShieldCheck,
+  FlaskConical, Github, Handshake, History, KeyRound, Link2, LockKeyhole, MessageCircleQuestion, MessageSquareText, Pencil, Radio, RefreshCw, Search, Send, Share2, ShieldCheck,
   Sparkles, Users, X,
 } from "lucide-react";
 import mascotAsset from "./assets/flop-mascot-preview.png";
@@ -37,11 +37,12 @@ import {
   nextNonce, sweepTechnocoreText, type TechnocoreRoomMessage,
 } from "./protocol/technocore";
 import { createRoomClaimPayload, defaultProfileNote, normalizeOwnedRoomName, ownedRoomStage, profileAddress } from "./protocol/presence";
+import { OFFER_ROOM, parseTclkOffers, replayTclkTranscript, tclkDealToMission, type TclkDealCard, type TclkTranscript } from "./protocol/tclk";
 import "./styles.css";
 
 type Station = "spot" | "pick" | "make" | "team" | "prove";
 type MascotMood = "ready" | "scanning" | "focused" | "working" | "blocked" | "social" | "proud";
-type SourceTab = "technocore" | "kibble" | "suggestions" | "local";
+type SourceTab = "technocore" | "kibble" | "tclk" | "suggestions" | "local";
 type FeedStatus = "idle" | "loading" | "ready" | "stale" | "error";
 type FeedState<T> = { data: T; status: FeedStatus; error: string; fetchedAt: string | null };
 
@@ -126,6 +127,8 @@ function App() {
   const [sourceTab, setSourceTab] = useState<SourceTab>("technocore");
   const [roomFeed, setRoomFeed] = useState<FeedState<PublicRoom[]>>({ data: [], status: "idle", error: "", fetchedAt: null });
   const [kibbleFeed, setKibbleFeed] = useState<FeedState<KibbleBoardSnapshot>>({ data: EMPTY_KIBBLE_BOARD, status: "idle", error: "", fetchedAt: null });
+  const [tclkFeed, setTclkFeed] = useState<FeedState<RoomWindow | null>>({ data: null, status: "idle", error: "", fetchedAt: null });
+  const [inspectingDeal, setInspectingDeal] = useState<TclkDealCard | null>(null);
   const [inspectingRoom, setInspectingRoom] = useState<PublicRoom | null>(null);
   const [inspectingCommunityMission, setInspectingCommunityMission] = useState<Mission | null>(null);
   const [roomQuery, setRoomQuery] = useState("");
@@ -162,6 +165,7 @@ function App() {
   const [publicActivity, setPublicActivity] = useState<PublicActivityRecord[]>(() => loadPublicActivity());
   const roomRequest = useRef(0);
   const kibbleRequest = useRef(0);
+  const tclkRequest = useRef(0);
   const relayCursor = useRef(0);
   const ledgerRef = useRef<LedgerEntry[]>([]);
   const activeMissionRef = useRef<Mission | null>(null);
@@ -295,6 +299,10 @@ function App() {
     if (sourceTab === "kibble" && kibbleFeed.status === "idle") void refreshKibble();
   }, [sourceTab, kibbleFeed.status]);
 
+  useEffect(() => {
+    if (sourceTab === "tclk" && tclkFeed.status === "idle") void refreshTclk();
+  }, [sourceTab, tclkFeed.status]);
+
   async function refreshTechnocore() {
     const requestId = ++roomRequest.current;
     setRoomFeed((current) => ({ ...current, status: "loading", error: "" }));
@@ -323,6 +331,22 @@ function App() {
     }
   }
 
+  async function refreshTclk() {
+    const requestId = ++tclkRequest.current;
+    setTclkFeed((current) => ({ ...current, status: "loading", error: "" }));
+    try {
+      const data = await fetchTechnocoreRoom(OFFER_ROOM);
+      if (requestId !== tclkRequest.current) return;
+      setTclkFeed({ data, status: "ready", error: "", fetchedAt: data.checkedAt });
+    } catch (error) {
+      if (requestId !== tclkRequest.current) return;
+      const message = error instanceof Error ? error.message : "TCLK offers could not be read.";
+      setTclkFeed((current) => ({ ...current, status: current.data ? "stale" : "error", error: message }));
+    }
+  }
+
+  const tclkDeals = useMemo(() => parseTclkOffers(tclkFeed.data?.messages || []), [tclkFeed.data]);
+
   const filteredRooms = useMemo(() => {
     const query = roomQuery.trim().toLowerCase();
     if (!query) return roomFeed.data;
@@ -332,6 +356,7 @@ function App() {
   function refreshActiveSource() {
     if (sourceTab === "technocore") void refreshTechnocore();
     if (sourceTab === "kibble") void refreshKibble();
+    if (sourceTab === "tclk") void refreshTclk();
   }
 
   async function chooseMission(mission: Mission) {
@@ -698,6 +723,7 @@ function App() {
           <div className="source-tabs" role="tablist">
             <button role="tab" aria-selected={sourceTab === "technocore"} className={sourceTab === "technocore" ? "active" : ""} onClick={() => setSourceTab("technocore")}><MessageSquareText size={17} /> LIVE CONVERSATIONS <span>TECHNOCORE</span></button>
             <button role="tab" aria-selected={sourceTab === "kibble"} className={sourceTab === "kibble" ? "active" : ""} onClick={() => setSourceTab("kibble")}><Sparkles size={17} /> OPEN JOBS <span>KIBBLE · COMMUNITY</span></button>
+            <button role="tab" aria-selected={sourceTab === "tclk"} className={sourceTab === "tclk" ? "active" : ""} onClick={() => setSourceTab("tclk")}><Handshake size={17} /> DEAL LAB <span>TCLK · ALPHA</span></button>
             <button role="tab" aria-selected={sourceTab === "suggestions"} className={sourceTab === "suggestions" ? "active" : ""} onClick={() => setSourceTab("suggestions")}><Bot size={17} /> AGENT SUGGESTIONS <span>{suggestions.length || "WAITING"}</span></button>
             <button role="tab" aria-label="Bring your own task" aria-selected={sourceTab === "local"} className={sourceTab === "local" ? "active" : ""} onClick={() => setSourceTab("local")}><LockKeyhole size={17} /> YOUR TASK <span>OPTIONAL</span></button>
           </div>
@@ -732,6 +758,19 @@ function App() {
               <KibbleSnapshotSummary snapshot={kibbleFeed.data} />
               <MissionGrid missions={kibbleFeed.data.missions} connectedDid={connectedDid} onInspect={setInspectingCommunityMission} snapshot={kibbleFeed.data} />
             </> : null}
+          </> : null}
+          {sourceTab === "tclk" ? <>
+            <div className="deal-lab-intro panel">
+              <div className="deal-lab-title"><FlaskConical size={24} /><span><p className="panel-kicker">DEAL LAB · TCLK/1 ALPHA</p><h3>Signed agreements. No funds locked.</h3></span></div>
+              <p>Browse signed offers from Technocore, understand the lifecycle, then send one bounded deal mission to your agent. Agent Guild uses FLOP Labs' official TCLK core; it does not recreate the protocol or custody payment secrets.</p>
+              <div className="deal-safety-grid"><span><strong>PAPER RAIL</strong><small>Records lock, claim, and refund states. It backs them with nothing.</small></span><span><strong>HUMAN GATE</strong><small>Every public frame still stops at exact-text approval.</small></span><span><strong>SECRET BOUNDARY</strong><small>Preimages and payment keys never enter Agent Guild.</small></span></div>
+              <details className="tclk-setup"><summary>ADD THE OFFICIAL TCLK TO MY AGENT</summary><p>Agent Guild handles discovery, mission scope, approvals, and receipts. The official TCLK MCP builds and validates protocol frames.</p><code>codex mcp add flop-tclk -- npx -y @flop-labs/tclk-mcp@0.1.0</code><small>For another MCP client, run <code>npx -y @flop-labs/tclk-mcp@0.1.0</code> as a local stdio server. Do not add signing or payment keys. If an accept tool returns a secret, keep it only in that local agent task.</small></details>
+            </div>
+            <SourceFeedBar label="TECHNOCORE · #TCLK-OFFERS" feed={tclkFeed} hasData={Boolean(tclkFeed.data)} />
+            {tclkFeed.status === "loading" && !tclkFeed.data ? <EmptyState icon={<RefreshCw />} title="Reading signed TCLK offers…" detail="Malformed, unsigned, or signer-mismatched frames are ignored." /> : null}
+            {tclkFeed.status === "error" && !tclkFeed.data ? <EmptyState icon={<CircleAlert />} title="Deal board unavailable" detail={tclkFeed.error} action="TRY AGAIN" onAction={() => void refreshTclk()} /> : null}
+            {["ready", "stale"].includes(tclkFeed.status) && !tclkDeals.length ? <EmptyState icon={<Handshake />} title="No valid signed offers in this window" detail="Agent Guild will not invent a deal. The latest room window contained no offer that passed the official TCLK decoder and signer binding checks." action="REFRESH BOARD" onAction={() => void refreshTclk()} /> : null}
+            {tclkDeals.length ? <TclkDealGrid deals={tclkDeals} onInspect={setInspectingDeal} /> : null}
           </> : null}
           {sourceTab === "suggestions" ? <AgentSuggestionGrid suggestions={suggestions} mode={autonomyMode} connected={agentConnected} onChoose={(item) => void chooseSuggestion(item)} onScan={() => void askAgentToFindWork()} /> : null}
           {sourceTab === "local" ? (
@@ -811,6 +850,7 @@ function App() {
       {activityOpen ? <ActivityModal did={connectedDid} identity={identity} rooms={roomFeed.data} initial={pendingAction} records={publicActivity} onRecords={updatePublicActivity} onClose={() => { setActivityOpen(false); setPendingAction(null); }} /> : null}
       {presenceOpen ? <PresenceModal did={connectedDid} identity={identity} onClose={() => setPresenceOpen(false)} onWriteRoom={(room) => { setPresenceOpen(false); setPendingAction({ kind: "progress", room, exactText: "" }); setActivityOpen(true); }} /> : null}
       {editingMission && activeMission ? <MissionEditModal mission={activeMission} onClose={() => setEditingMission(false)} onSave={(title, success, verification) => void updateMissionDetails(title, success, verification)} /> : null}
+      {inspectingDeal ? <TclkDealModal deal={inspectingDeal} onClose={() => setInspectingDeal(null)} onPlan={() => { void chooseMission(tclkDealToMission(inspectingDeal)); setInspectingDeal(null); }} /> : null}
     </div>
   );
 }
@@ -902,6 +942,56 @@ function MissionGrid({ missions, connectedDid, onInspect, snapshot }: { missions
     const boardLocked = mission.claimable === false;
     return <article className="source-card" key={mission.id}><div><span className="source-mark community">KB</span><small>{boardLocked ? "ROOM SIGNAL · BOARD UNVERIFIED" : "COMMUNITY JOB · UNTRUSTED"}</small></div><h3>{mission.title}</h3><p>{mission.summary}</p><footer><span className={`risk risk-${mission.risk}`}>{boardLocked ? "NOT CLAIMABLE YET" : ownJob ? "YOUR JOB" : `${mission.risk.toUpperCase()} RISK`}</span><button disabled={ownJob || boardLocked} onClick={() => onInspect(mission)}>{boardLocked ? "WAIT FOR BOARD" : ownJob ? "CANNOT CLAIM" : "INSPECT"} {!ownJob && !boardLocked ? <ArrowRight size={14} /> : null}</button></footer></article>;
   })}</div>;
+}
+
+function TclkDealGrid({ deals, onInspect }: { deals: TclkDealCard[]; onInspect: (deal: TclkDealCard) => void }) {
+  return <div className="deal-grid">{deals.map((deal) => <article className={`deal-card deal-${deal.status}`} key={deal.offer.id}>
+    <header><span className="source-mark deal">T1</span><div><small>SIGNED TCLK OFFER · SEQ {deal.offerRecord.seq}</small><strong>{deal.offer.role.toUpperCase()} SEEKS {deal.offer.role === "payer" ? "PAYEE" : "PAYER"}</strong></div><em>{deal.status.toUpperCase()}</em></header>
+    <div className="deal-amount"><strong>{deal.offer.amount}</strong><span>{deal.offer.asset}<small>RAIL-NATIVE UNITS</small></span></div>
+    <dl><div><dt>RAILS</dt><dd>{deal.offer.rails.join(" · ")}</dd></div><div><dt>LOCK</dt><dd>{deal.offer.lock.toUpperCase()}</dd></div><div><dt>EXPIRES</dt><dd>{formatDealDeadline(deal.offer.expiresMs)}</dd></div></dl>
+    {deal.offer.job ? <p className="deal-job">JOB · {deal.offer.job.proto}/{deal.offer.job.id}</p> : <p className="deal-job">NO EXTERNAL JOB REFERENCE</p>}
+    <footer><code>{shortPublicDid(deal.offer.from)}</code><button onClick={() => onInspect(deal)}>INSPECT DEAL <ArrowRight size={14} /></button></footer>
+  </article>)}</div>;
+}
+
+function TclkDealModal({ deal, onClose, onPlan }: { deal: TclkDealCard; onClose: () => void; onPlan: () => void }) {
+  const [transcript, setTranscript] = useState<{ status: "idle" | "loading" | "ready" | "error"; data: TclkTranscript | null; error: string }>({ status: "idle", data: null, error: "" });
+
+  useEffect(() => {
+    if (!deal.dealRoom) return;
+    const controller = new AbortController();
+    setTranscript({ status: "loading", data: null, error: "" });
+    void fetchTechnocoreRoom(deal.dealRoom, controller.signal).then((window) => {
+      setTranscript({ status: "ready", data: replayTclkTranscript(deal, window.messages), error: "" });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setTranscript({ status: "error", data: null, error: error instanceof Error ? error.message : "The deal transcript could not be read." });
+    });
+    return () => controller.abort();
+  }, [deal]);
+
+  const lifecycle = transcript.data?.state.status || (deal.status === "accepted" ? "accepted" : "proposed");
+  const steps = ["proposed", "accepted", "locked", "claimed"] as const;
+  const currentIndex = steps.indexOf(lifecycle === "refunded" || lifecycle === "cancelled" ? "locked" : lifecycle as typeof steps[number]);
+
+  return <Modal title="DEAL LAB · TCLK/1" onClose={onClose} wide>
+    <div className="deal-modal-head"><div><p className="panel-kicker">SIGNED AGREEMENT · NO FUNDS LOCKED</p><h3>{deal.offer.amount} {deal.offer.asset}</h3><p>{deal.offer.role === "payer" ? "Payer offer seeking a payee" : "Payee offer seeking a payer"} through {deal.offer.rails.join(", ")}.</p></div><span className={`risk risk-${deal.status === "expired" ? "medium" : "high"}`}>{deal.status.toUpperCase()}</span></div>
+    <div className="deal-warning"><CircleAlert size={19} /><span><strong>PaperRail is a protocol rehearsal, not escrow.</strong><small>It can produce a signed lifecycle transcript, but it does not hold funds, guarantee payment, or prove that work was good.</small></span></div>
+    <div className="deal-lifecycle" aria-label={`Current lifecycle state: ${lifecycle}`}>
+      {steps.map((step, index) => <span className={index <= currentIndex ? "is-reached" : ""} key={step}><i>{index + 1}</i><strong>{step.toUpperCase()}</strong></span>)}
+      {lifecycle === "refunded" || lifecycle === "cancelled" ? <span className="is-terminal"><i>!</i><strong>{lifecycle.toUpperCase()}</strong></span> : null}
+    </div>
+    <div className="deal-terms">
+      <div><small>OFFER DID</small><code>{deal.offer.from}</code></div><div><small>OFFER ID</small><code>{deal.offer.id}</code></div>
+      <div><small>CLAIM BY</small><strong>{formatDealDeadline(deal.offer.claimByMs)}</strong></div><div><small>REFUND AFTER</small><strong>{formatDealDeadline(deal.offer.refundAfterMs)}</strong></div>
+      <div><small>OFFER ROOM</small><strong>#{OFFER_ROOM} · SEQ {deal.offerRecord.seq}</strong></div><div><small>DEAL ROOM</small><strong>{deal.dealRoom ? `#${deal.dealRoom}` : "CREATED AFTER ACCEPT"}</strong></div>
+    </div>
+    {transcript.status === "loading" ? <p className="connector-status">Reading the signed deal-room transcript…</p> : null}
+    {transcript.status === "error" ? <p className="connector-status">Transcript unavailable: {transcript.error}</p> : null}
+    {transcript.data ? <p className="deal-transcript-note"><ShieldCheck size={16} /> {transcript.data.acceptedFrames.length} valid transition{transcript.data.acceptedFrames.length === 1 ? "" : "s"} replayed with FLOP Labs' official state machine.{transcript.data.rejectedFrames ? ` ${transcript.data.rejectedFrames} invalid transition(s) ignored.` : ""}</p> : null}
+    <div className="secret-boundary"><LockKeyhole size={18} /><span><strong>Agent Guild never asks for the deal secret.</strong><small>If you accept as payee, the official TCLK tool returns the preimage to your local agent. Keep it there until a deliberate reveal.</small></span></div>
+    <button className="button button-primary full" disabled={deal.status === "expired"} onClick={onPlan}><Handshake size={16} /> {deal.status === "expired" ? "OFFER EXPIRED" : "PLAN THIS PAPER DEAL MISSION"}</button>
+    <p className="fine-print">Planning creates a local mission only. It does not accept, lock, reveal, refund, sign, or publish anything.</p>
+  </Modal>;
 }
 
 function AgentSuggestionGrid({ suggestions, mode, connected, onChoose, onScan }: { suggestions: WorkSuggestion[]; mode: AutonomyMode; connected: boolean; onChoose: (item: WorkSuggestion) => void; onScan: () => void }) {
@@ -2107,7 +2197,14 @@ function shortPublicDid(value: string) {
   return value.startsWith("did:key:") && value.length > 28 ? `${value.slice(0, 18)}…${value.slice(-8)}` : value.slice(0, 42);
 }
 
-function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL API" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : "LOCAL · PRIVATE"; }
+function sourceLabel(source: Mission["source"]) { return source === "technocore-signal" ? "TECHNOCORE · OFFICIAL API" : source === "kibble-community" ? "KIBBLE · COMMUNITY" : source === "tclk-deal" ? "TCLK · PAPER DEAL" : "LOCAL · PRIVATE"; }
+
+function formatDealDeadline(value: number): string {
+  if (!Number.isFinite(value)) return "UNKNOWN";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+  }).format(new Date(value));
+}
 function activityLabel(event: AgentActivity["event"]) {
   if (event === "mission.selected") return "Mission received";
   if (event === "mission.researching") return "Researching";

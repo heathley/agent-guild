@@ -15,7 +15,7 @@ export type AgentEventName = (typeof AGENT_EVENTS)[number];
 export type BridgeMission = {
   id: string;
   title: string;
-  source?: "technocore-signal" | "kibble-community" | "local";
+  source?: "technocore-signal" | "kibble-community" | "tclk-deal" | "local";
   summary?: string;
   successCriteria?: string[];
   verification?: string;
@@ -61,7 +61,7 @@ export type MissionAssignment = {
   agentDid: string;
   mission: {
     id: string;
-    source: "technocore-signal" | "kibble-community" | "local";
+    source: "technocore-signal" | "kibble-community" | "tclk-deal" | "local";
     title: string;
     summary: string;
     successCriteria: string[];
@@ -101,7 +101,7 @@ export function sanitizeMissionAssignment(input: unknown): MissionAssignment | n
       typeof value.agentDid !== "string" || !/^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]{44}$/.test(value.agentDid) ||
       value.publicActions !== "human-approval-required" || !mission ||
       typeof mission.id !== "string" || typeof mission.title !== "string" || typeof mission.summary !== "string" ||
-      !["technocore-signal", "kibble-community", "local"].includes(mission.source as string) ||
+      !["technocore-signal", "kibble-community", "tclk-deal", "local"].includes(mission.source as string) ||
       !Array.isArray(mission.successCriteria) || mission.successCriteria.length < 1 || mission.successCriteria.length > 8 ||
       mission.successCriteria.some((item) => typeof item !== "string" || !item.trim() || item.length > 500) ||
       typeof mission.verification !== "string" || !["low", "medium", "high"].includes(mission.risk as string) ||
@@ -226,7 +226,7 @@ export function workspaceName(input: unknown): string {
 
 function validMission(value: BridgeMission): boolean {
   return typeof value.id === "string" && typeof value.title === "string" &&
-    (value.source === undefined || ["technocore-signal", "kibble-community", "local"].includes(value.source)) &&
+    (value.source === undefined || ["technocore-signal", "kibble-community", "tclk-deal", "local"].includes(value.source)) &&
     (value.summary === undefined || typeof value.summary === "string") &&
     (value.successCriteria === undefined || (Array.isArray(value.successCriteria) && value.successCriteria.length <= 8 && value.successCriteria.every((item) => typeof item === "string" && item.length <= 500))) &&
     (value.verification === undefined || typeof value.verification === "string") &&
